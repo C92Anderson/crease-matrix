@@ -3,6 +3,7 @@ This module contains functions that scrapes games and assembles a game-level mod
 """
 import scrape_functions
 import pipeline_functions
+import numpy as np
 
 ## Read data from s3
 game_info_data = pipeline_functions.read_boto_s3('games-all','game_info_data.csv')
@@ -20,7 +21,21 @@ year = 2018
 print(start_game_id)
 
 ## Update xG model
-scrape_functions.scrape_games(end_game_id, None, year, True, False, True)
+#scrape_functions.scrape_games(end_game_id, None, year, True, False, True)
+
+## Update starter list
+starter_df = pipeline_functions.read_boto_s3('games-all','game-starters.csv')
+
+new_starters = pipeline_functions.update_starter_df(year, start_game_id+1, end_game_id, starter_df)
+
+#new_starters = new_starters.apply(int)
+
+starter_df = starter_df.append(new_starters)
+
+print("Goalie starter dataframe updated: " + str(starter_df['id'].count()) + " count, " +
+      str(starter_df['id'].drop_duplicates().count()) + " unique games")
+
+pipeline_functions.write_boto_s3(starter_df, 'games-all', 'starters2.csv')
 
 
 print("Scrape from " + str(start_game_id+1) + " to " + str(year) + "0" + str(end_game_id))

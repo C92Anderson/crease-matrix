@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 from geopy.distance import vincenty
 import requests
+import scrape_functions
 from sklearn.metrics import log_loss
 from xgboost import XGBRegressor
 from sklearn.naive_bayes import GaussianNB
@@ -22,6 +23,7 @@ from sklearn.calibration import CalibratedClassifierCV
 import pickle
 import boto3
 import io
+import os
 
 
 def yesterday_last_gameid():
@@ -48,6 +50,70 @@ def read_boto_s3(bucket, file):
 ## Define elo functions
 mean_elo = 1500
 elo_width = 400
+
+
+def past_game_starter(df, year):
+    """
+    :param df:
+    :param year:
+    :return:
+    """
+    starter_vars = ['Date', 'Game_Id', 'Away_Goalie_Id', 'Away_Goalie', 'Away_Team', 'Home_Goalie_Id',
+                    'Home_Goalie', 'Period', 'Seconds_Elapsed']
+
+    starter_information = df.loc[:, starter_vars] \
+        .dropna(subset=['Away_Goalie_Id', 'Home_Goalie_Id', 'Date', 'Game_Id', 'Period', 'Seconds_Elapsed']) \
+        .sort_values(['Date', 'Game_Id', 'Period', 'Seconds_Elapsed'], ascending=True) \
+        .dropna() \
+        .groupby(['Date', 'Game_Id']) \
+        .head(1) \
+        .rename(index=str, columns={"Home_Goalie_Id": "home_starter_id", "Away_Goalie_Id": "away_starter_id"})
+
+    starter_information = starter_information.loc[:, ['Game_Id', 'home_starter_id', 'away_starter_id']].dropna()
+
+    starter_information['id'] = ((year * 1000000) + starter_information['Game_Id'].astype(float)).astype(int)
+
+    return (starter_information.loc[:, ['id', 'home_starter_id', 'away_starter_id']])
+
+
+def update_starter_df(year, start_game_id, end_game_id, starter_df):
+    """
+    :param year:
+    :param start_game_id:
+    :param end_game_id:
+    :param starter_df:
+    :return:
+    """
+    games_list = json_schedule.get_dates(list(range(start_game_id + 1, int(str(year) + "0" + str(end_game_id)))))
+
+    pbp = scrape_functions.scrape_list_of_games(games_list, False)
+    df = pd.DataFrame(pbp[0], columns=['Game_Id', 'Date', 'Period', 'Event', 'Description', 'Time_Elapsed',
+                                       'Seconds_Elapsed', 'Strength', 'Ev_Zone', 'Type', 'Ev_Team',
+                                       'Home_Zone', 'Away_Team', 'Home_Team', 'p1_name', 'p1_ID', 'p2_name',
+                                       'p2_ID', 'p3_name', 'p3_ID', 'awayPlayer1', 'awayPlayer1_id',
+                                       'awayPlayer2', 'awayPlayer2_id', 'awayPlayer3', 'awayPlayer3_id',
+                                       'awayPlayer4', 'awayPlayer4_id', 'awayPlayer5', 'awayPlayer5_id',
+                                       'awayPlayer6', 'awayPlayer6_id', 'homePlayer1', 'homePlayer1_id',
+                                       'homePlayer2', 'homePlayer2_id', 'homePlayer3', 'homePlayer3_id',
+                                       'homePlayer4', 'homePlayer4_id', 'homePlayer5', 'homePlayer5_id',
+                                       'homePlayer6', 'homePlayer6_id', 'Away_Players', 'Home_Players',
+                                       'Away_Score', 'Home_Score', 'Away_Goalie', 'Away_Goalie_Id',
+                                       'Home_Goalie', 'Home_Goalie_Id', 'xC', 'yC', 'Home_Coach',
+                                       'Away_Coach'])
+
+    new_starters = past_game_starter(df, year)
+
+    return (new_starters)
+
+def encode_data(df):
+    """
+    :param df: data with encoding issues
+    :return df2: data without encoding issues
+    """
+    df.to_csv('df.csv', index=False)
+    df2 = pd.read_csv("df.csv", encoding='latin-1')
+    os.remove("df.csv")
+    return (df2)
 
 def write_boto_s3(df, bucket, filename):
     """
@@ -347,8 +413,8 @@ def process_games_ytd(szn,
                 game_data['game_start_est'] = game_data['game_start_utc']\
                         + pd.Timedelta(hours=int(game_data['timeZone_Num']))
 
-                game_data['home_starter_id'] = data['liveData']['boxscore']['teams']['home']['goalies'][0]
-                game_data['away_starter_id'] = data['liveData']['boxscore']['teams']['away']['goalies'][0]
+                #game_data['home_starter_id'] = data['liveData']['boxscore']['teams']['home']['goalies'][0]
+                #game_data['away_starter_id'] = data['liveData']['boxscore']['teams']['away']['goalies'][0]
 
                 # Referees for the game
                 refs = []

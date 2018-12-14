@@ -2,6 +2,7 @@ import json_pbp
 import html_pbp
 import espn_pbp
 import shared
+import requests
 import numpy as np
 from sklearn.preprocessing import PolynomialFeatures, StandardScaler
 import json_shifts
@@ -9,12 +10,27 @@ import html_shifts
 import playing_roster
 import json_schedule
 import pandas as pd
+import boto3
 import time
 import datetime
 import thinkbayes2 as tb
 import pipeline_functions
+import io
+import pickle
 
 # Additional Functions
+def s3_model_object_load(bucket, location):
+    s3 = boto3.resource('s3')
+    with io.BytesIO() as data:
+        s3.Bucket(bucket).download_fileobj(location, data)
+        data.seek(0)  # move back to the beginning after writing
+        m = pickle.load(data)
+    return(m)
+
+def s3_model_object_dump(model, bucket, filename):
+    s3_resource = boto3.resource('s3')
+    pickle_byte_obj = pickle.dumps(model)
+    s3_resource.Object(bucket, 'Models/' + str(filename)).put(Body=pickle_byte_obj)
 
 # Create object to adjust for rink bias
 
@@ -363,11 +379,7 @@ def transform_data(data):
 
 
 def lookups_data_clean(data):
-    from sqlalchemy import create_engine
-    engine = create_engine(
-        'mysql+mysqlconnector://cole92anderson:cprice31!@css-db.cnqvzrgc2pnj.us-east-1.rds.amazonaws.com:3306/nhl_all')
-
-    player_lookup = pd.read_sql(con=engine, sql="SELECT * FROM `nhl_all`.`hockey_roster_info2` AS B")
+    player_lookup = pipeline_functions.read_boto_s3('hockey-all', 'hockey_roster_info.csv')
     print("Player Lookup Dim: " + str(player_lookup.shape))
     player_lookup = player_lookup.sort_values('seasonId', ascending=False).groupby(['playerId']).first().reset_index(). \
                         loc[:, ['playerBirthDate', 'playerPositionCode', 'playerShootsCatches', 'playerId']]
@@ -577,7 +589,7 @@ def All_Model_Scoring(model_data, data, szn):
 
     ## Save Model
     filename = 'xG_Model_' + str(szn) + '_obj.sav'
-    pickle.dump(xG_model_CV, open(filename, 'wb'))
+    s3_model_object_dump(xG_model_CV, 'shots-all', filename)
 
     print (str(szn) + 'Max auc_roc:', xG_model_CV.scores_[1].max())
 
@@ -614,7 +626,7 @@ def All_Model_Scoring(model_data, data, szn):
     xR_model_CV.fit(szn_model_mat, rebound)
 
     filename = 'xR_Model_' + str(szn) + '_obj.sav'
-    pickle.dump(xR_model_CV, open(filename, 'wb'))
+    s3_model_object_dump(xR_model_CV, 'shots-all', filename)
 
     print (str(szn) + ' Max auc_roc:', xR_model_CV.scores_[1].max())
 
@@ -675,7 +687,7 @@ def All_Model_ScoringOnly(model_data, data, szn):
 
     ## Load Model
     filename = 'xG_Model_' + str(szn) + '_obj.sav'
-    xG_model_CV = pickle.load(open(filename, 'rb'))
+    xG_model_CV = s3_model_object_load('shots-all','Models/' + str(filename))
 
     ## Model Ability
     print (str(szn) + 'Max auc_roc:', xG_model_CV.scores_[1].max())
@@ -700,7 +712,7 @@ def All_Model_ScoringOnly(model_data, data, szn):
 
     ## Load Model
     filename = 'xR_Model_' + str(szn) + '_obj.sav'
-    xR_model_CV = pickle.load(open(filename, 'rb'))
+    xR_model_CV = s3_model_object_load('shots-all','Models/' + str(filename))
 
     print (str(szn) + ' Max auc_roc:', xR_model_CV.scores_[1].max())
 
@@ -835,3 +847,65 @@ def roster_update(season, games):
     roster_all = roster_all.sort_values(['nhl_id', 'season']).groupby(['nhl_id', 'season']).last()
 
     pipeline_functions.write_boto_s3(roster_all, 'hockey-all', "roster_season_master")
+
+
+def roster_info_update(season):
+    """
+    Update hockey_roster_info
+    """
+    hockey_roster_info = pipeline_functions.read_boto_s3('hockey-all', 'hockey_roster_info.csv')
+
+    # URL for the season
+    url = "https://statsapi.web.nhl.com/api/v1/teams?expand=team.roster&season=" + str(season)
+
+    # Read All Rosters
+    all_rosters = requests.get(url).json()
+
+    rosterAll = pd.DataFrame()
+    ### Loop through each team
+    for i in range(len(all_rosters['teams'])):
+        team_roster = all_rosters['teams'][i]['roster']['roster']
+
+        for j in range(len(team_roster)):
+            player_pd = pd.DataFrame(team_roster[j]['person'], index=[0]).drop(['link'], axis=1)
+
+            player_pd = player_pd.rename(index=str, columns={"id": "playerId", "fullName": "playerName"})
+
+            player_info = requests.get(
+                "https://statsapi.web.nhl.com/api/v1/people/" + str(int(player_pd['playerId']))).json()
+
+            player_info = player_info['people'][0]
+
+            player_pd['Team'] = all_rosters['teams'][i]['abbreviation']
+            player_pd['TeamName'] = all_rosters['teams'][i]['name']
+            # player_pd['Pos'] = pd.Series(team_roster[j]['position']['code'])
+            player_pd['playerPositionCode'] = player_info['primaryPosition']['code']
+            # player_pd['Num'] = pd.Series(team_roster[j]['jerseyNumber'])
+            player_pd['seasonId'] = season
+            player_pd['active'] = player_info['active']
+            player_pd['rosterStatus'] = player_info['rosterStatus']
+            player_pd['playerBirthCountry'] = player_info['birthCountry']
+            player_pd['playerBirthDate'] = player_info['birthDate']
+            player_pd['playerFirstName'] = player_info['firstName']
+            player_pd['playerLastName'] = player_info['lastName']
+            player_pd['playerHeight'] = player_info['height']
+            player_pd['playerWeight'] = player_info['weight']
+            # player_pd['playerNationality'] = player_info['nationality']
+
+            try:
+                player_pd['playerBirthStateProvince'] = player_info["birthCity"]
+            except:
+                pass
+            try:
+                player_pd['birthStateProvince'] = player_info["birthStateProvince"]
+            except:
+                pass
+            try:
+                player_pd['playerShootsCatches'] = player_info['shootsCatches']
+            except:
+                pass
+            rosterAll = rosterAll.append(player_pd)
+
+    hockey_roster_info = hockey_roster_info.append(rosterAll).drop_duplicates()
+
+    pipeline_functions.write_boto_s3(hockey_roster_info, 'hockey-all', 'hockey_roster_info.csv')

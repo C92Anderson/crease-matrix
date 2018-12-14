@@ -12,11 +12,12 @@ def get_pbp(game_id):
     """
     Given a game_id it returns the raw json
     Ex: http://statsapi.web.nhl.com/api/v1/game/2016020475/feed/live
-    
+
     :param game_id: the game
-    
+
     :return: raw json of game or None if couldn't get game
     """
+    print("Getting:" + str(game_id))
     url = 'http://statsapi.web.nhl.com/api/v1/game/{}/feed/live'.format(game_id)
 
     response = shared.get_url(url)
@@ -34,9 +35,9 @@ def change_event_name(event):
     """
     Change event names from json style to html
     ex: BLOCKED_SHOT to BLOCK
-    
+
     :param event: event type
-    
+
     :return: fixed event type
     """
     event_types ={
@@ -66,10 +67,10 @@ def change_event_name(event):
 
 def get_teams(pbp_json):
     """
-    Get teams 
-    
+    Get teams
+
     :param json: pbp json
-    
+
     :return: dict with home and away
     """
     return {'Home': shared.TEAMS[pbp_json['gameData']['teams']['home']['name'].upper()],
@@ -79,9 +80,9 @@ def get_teams(pbp_json):
 def parse_event(event):
     """
     Parses a single event when the info is in a json format
-    
-    :param event: json of event 
-    
+
+    :param event: json of event
+
     :return: dictionary with the info
     """
     play = dict()
@@ -111,26 +112,20 @@ def parse_event(event):
     return play
 
 
-def parse_json(game_json, game_id):
+def parse_json(game_json):
     """
     Scrape the json for a game
-    
     :param game_json: raw json
-    :param game_id: game id for game
-    
-    :return: Either a DataFrame with info for the game 
+    :return: Either a DataFrame with info for the game
     """
     columns = ['period', 'event', 'seconds_elapsed', 'p1_name', 'p1_ID', 'p2_name', 'p2_ID', 'p3_name', 'p3_ID', 'xC', 'yC']
 
-    # 'PERIOD READY' & 'PERIOD OFFICIAL'..etc aren't found in html...so get rid of them
-    events_to_ignore = ['PERIOD_READY', 'PERIOD_OFFICIAL', 'GAME_READY', 'GAME_OFFICIAL']
+    plays = game_json['liveData']['plays']['allPlays'][2:]  # All the plays/events in a game
 
-    try:
-        plays = game_json['liveData']['plays']['allPlays'][2:]  # All the plays/events in a game
-        events = [parse_event(play) for play in plays if play['result']['eventTypeId'] not in events_to_ignore]
-    except Exception as e:
-        print('Error parsing Json pbp for game {}'.format(game_id), e)
-        return None
+    # Go through all events and store all the info in a list
+    # 'PERIOD READY' & 'PERIOD OFFICIAL'..etc aren't found in html...so get rid of them
+    event_to_ignore = ['PERIOD_READY', 'PERIOD_OFFICIAL', 'GAME_READY', 'GAME_OFFICIAL']
+    events = [parse_event(play) for play in plays if play['result']['eventTypeId'] not in event_to_ignore]
 
     return pd.DataFrame(events, columns=columns)
 
@@ -138,9 +133,9 @@ def parse_json(game_json, game_id):
 def scrape_game(game_id):
     """
     Used for debugging. HTML depends on json so can't follow this structure
-    
+
     :param game_id: game to scrape
-    
+
     :return: DataFrame of game info
     """
     game_json = get_pbp(game_id)

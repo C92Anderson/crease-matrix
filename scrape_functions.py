@@ -373,7 +373,7 @@ def scrape_games(last_game, if_games_list, szn, if_scrape_shifts, model_df, scor
     #pbp_df_t_1 = pd.read_csv("nhl_pbp" + str(last_season) + ".csv", dtype=types, encoding='latin-1')
     #pbp_df_t0 = pd.read_csv("nhl_pbp" + str(this_season) + ".csv", dtype=types, encoding='latin-1')
     pbp_df_t_1 = pipeline_functions.read_boto_s3('shots-all', 'nhl_pbp' + str(last_season) + '.csv')
-    pbp_df_t0 = pipeline_functions.read_boto_s3('shots-all', 'nhl_pbp' + str(this_season) + '.csv')
+    pbp_df_t0 = pipeline_functions.encode_data(pipeline_functions.read_boto_s3('shots-all', 'nhl_pbp' + str(this_season) + '.csv'))
 
     pbp_df_all = pbp_df_t_1.append(pbp_df_t0)
 
@@ -398,16 +398,20 @@ def scrape_games(last_game, if_games_list, szn, if_scrape_shifts, model_df, scor
     games_list = json_schedule.get_dates(games_list)
 
     ## Update Rosters
-    # df_adjustments.roster_update(szn, games)
+    df_adjustments.roster_info_update(str(szn)+str(szn+1))
 
     print(games_list)
     print(type(games_list))
 
     pbp_df, shifts_df = scrape_list_of_games(games_list, if_scrape_shifts)
+    pbp_df = pipeline_functions.encode_data(pbp_df)
+    shifts_df = pipeline_functions.encode_data(pbp_df)
 
     # Save/Load/Append/Save PBP
     #pbp_df.to_csv('nhl_pbp.csv', index=False)
     #pbp_df = pd.read_csv("nhl_pbp.csv", dtype=types, encoding='latin-1')
+    pbp_df = pipeline_functions.encode_data(pbp_df)
+
     pbp_df_all = pbp_df_t0.append(pbp_df)
     pipeline_functions.write_boto_s3(pbp_df_all, 'shots-all', 'nhl_pbp' + str(this_season) + '.csv')
 
