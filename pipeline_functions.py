@@ -58,12 +58,31 @@ def past_game_starter(df, year):
     :param year:
     :return:
     """
+    goalie_xwalk = read_boto_s3('hockey-all','hockey_roster_info.csv')
+
+    goalie_xwalk['playerName'] = goalie_xwalk['playerName'].str.upper()
+    goalie_xwalk['playerId'] = goalie_xwalk['playerId'].astype(int)
+    goalie_xwalk = goalie_xwalk\
+        .loc[goalie_xwalk.playerPositionCode == "G",['playerName','playerId']]\
+        .drop_duplicates()
+
+    away_goalie = goalie_xwalk.rename(index=str, columns={"playerName": "Away_Goalie", "playerId": "away_starter_id2"})
+    home_goalie = goalie_xwalk.rename(index=str, columns={"playerName": "Home_Goalie", "playerId": "home_starter_id2"})
+
     starter_vars = ['Date', 'Game_Id', 'Away_Goalie_Id', 'Away_Goalie', 'Away_Team', 'Home_Goalie_Id',
                     'Home_Goalie', 'Period', 'Seconds_Elapsed']
 
-    starter_information = df.loc[:, starter_vars] \
-        .dropna(subset=['Away_Goalie_Id', 'Home_Goalie_Id', 'Date', 'Game_Id', 'Period', 'Seconds_Elapsed']) \
-        .sort_values(['Date', 'Game_Id', 'Period', 'Seconds_Elapsed'], ascending=True) \
+    starter_information = df.loc[:, starter_vars]\
+    .fillna(method = 'bfill')\
+    .dropna(subset=['Away_Goalie_Id', 'Home_Goalie_Id', 'Date', 'Game_Id', 'Period', 'Seconds_Elapsed']) \
+    .sort_values(['Date', 'Game_Id', 'Period', 'Seconds_Elapsed'], ascending=True)\
+    .merge(home_goalie, on = ['Home_Goalie'], how = 'left')\
+    .merge(away_goalie, on = ['Away_Goalie'], how = 'left')
+
+    starter_information['Away_Goalie_Id'] = starter_information.apply(lambda x: int(x.away_starter_id2) if x.Away_Goalie_Id == 'NA' else x.Away_Goalie_Id, axis=1)#.astype(int)
+    starter_information['Home_Goalie_Id'] = starter_information.apply(lambda x: int(x.home_starter_id2) if x.Home_Goalie_Id == 'NA' else x.Home_Goalie_Id, axis=1)#.astype(int)
+
+    starter_information = starter_information\
         .dropna() \
         .groupby(['Date', 'Game_Id']) \
         .head(1) \
@@ -71,12 +90,11 @@ def past_game_starter(df, year):
 
     starter_information = starter_information.loc[:, ['Game_Id', 'home_starter_id', 'away_starter_id']].dropna()
 
-    starter_information['id'] = ((year * 1000000) + starter_information['Game_Id'].astype(float)).astype(int)
+    starter_information['id'] = ((year * 1000000) + starter_information['Game_Id'].astype(float))
 
-    return (starter_information.loc[:, ['id', 'home_starter_id', 'away_starter_id']])
+    return (starter_information.loc[:, ['id', 'home_starter_id', 'away_starter_id']].astype(int))
 
-
-def update_starter_df(year, start_game_id, end_game_id, starter_df):
+def update_starter_df(year, start_game_id, end_game_id):
     """
     :param year:
     :param start_game_id:
@@ -105,13 +123,13 @@ def update_starter_df(year, start_game_id, end_game_id, starter_df):
 
     return (new_starters)
 
-def encode_data(df):
+def encode_data(df, types):
     """
     :param df: data with encoding issues
     :return df2: data without encoding issues
     """
     df.to_csv('df.csv', index=False)
-    df2 = pd.read_csv("df.csv", encoding='latin-1')
+    df2 = pd.read_csv("df.csv", encoding='latin-1', dtype = types)
     os.remove("df.csv")
     return (df2)
 

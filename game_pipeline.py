@@ -26,7 +26,7 @@ print(start_game_id)
 ## Update starter list
 starter_df = pipeline_functions.read_boto_s3('games-all','game-starters.csv')
 
-new_starters = pipeline_functions.update_starter_df(year, start_game_id+1, end_game_id, starter_df)
+new_starters = pipeline_functions.update_starter_df(year, start_game_id+1, end_game_id)
 
 #new_starters = new_starters.apply(int)
 

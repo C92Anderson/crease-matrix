@@ -359,7 +359,7 @@ def scrape_games(last_game, if_games_list, szn, if_scrape_shifts, model_df, scor
     """
     import numpy as np
 
-    types = {'xC': np.float64,
+    dtypes = {'xC': np.float64,
              'yC': np.float64,
              # 'X': np.float64,
              # 'X_unadj': np.float64,
@@ -370,11 +370,11 @@ def scrape_games(last_game, if_games_list, szn, if_scrape_shifts, model_df, scor
     last_season = str(szn - 1) + str(szn)
     this_season = str(szn) + str(szn + 1)
 
-    #pbp_df_t_1 = pd.read_csv("nhl_pbp" + str(last_season) + ".csv", dtype=types, encoding='latin-1')
-    #pbp_df_t0 = pd.read_csv("nhl_pbp" + str(this_season) + ".csv", dtype=types, encoding='latin-1')
-    pbp_df_t_1 = pipeline_functions.read_boto_s3('shots-all', 'nhl_pbp' + str(last_season) + '.csv')
-    pbp_df_t0 = pipeline_functions.encode_data(pipeline_functions.read_boto_s3('shots-all', 'nhl_pbp' + str(this_season) + '.csv'))
+    ## Read last 2 seasons of data
+    pbp_df_t_1 = pipeline_functions.encode_data(pipeline_functions.read_boto_s3('shots-all', 'nhl_pbp' + str(last_season) + '.csv'), types = dtypes)
+    pbp_df_t0 = pipeline_functions.encode_data(pipeline_functions.read_boto_s3('shots-all', 'nhl_pbp' + str(this_season) + '.csv'), types = dtypes)
 
+    ## Append last 2 seasons
     pbp_df_all = pbp_df_t_1.append(pbp_df_t0)
 
     prior_games = max(pbp_df_t0.Game_Id)
@@ -408,11 +408,9 @@ def scrape_games(last_game, if_games_list, szn, if_scrape_shifts, model_df, scor
     shifts_df = pipeline_functions.encode_data(pbp_df)
 
     # Save/Load/Append/Save PBP
-    #pbp_df.to_csv('nhl_pbp.csv', index=False)
-    #pbp_df = pd.read_csv("nhl_pbp.csv", dtype=types, encoding='latin-1')
     pbp_df = pipeline_functions.encode_data(pbp_df)
 
-    pbp_df_all = pbp_df_t0.append(pbp_df)
+    pbp_df_all = pbp_df_all.append(pbp_df)
     pipeline_functions.write_boto_s3(pbp_df_all, 'shots-all', 'nhl_pbp' + str(this_season) + '.csv')
 
     # Save/Load/Append/Save Shifts

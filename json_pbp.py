@@ -17,9 +17,7 @@ def get_pbp(game_id):
 
     :return: raw json of game or None if couldn't get game
     """
-    print("Getting:" + str(game_id))
     url = 'http://statsapi.web.nhl.com/api/v1/game/{}/feed/live'.format(game_id)
-
     response = shared.get_url(url)
     time.sleep(1)
 
