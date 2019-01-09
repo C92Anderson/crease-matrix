@@ -11,15 +11,7 @@ from geopy.distance import vincenty
 import requests
 import scrape_functions
 from sklearn.metrics import log_loss
-from xgboost import XGBRegressor
-from sklearn.naive_bayes import GaussianNB
-from sklearn.model_selection import GroupKFold, GridSearchCV, KFold
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.neural_network import MLPClassifier
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split, KFold, cross_val_score
 import sklearn.metrics
-from sklearn.calibration import CalibratedClassifierCV
 import pickle
 import boto3
 import io
@@ -31,6 +23,18 @@ def yesterday_last_gameid():
     Return last game ID from finished games
     """
     out = json_schedule.get_schedule(date.today() - timedelta(1),date.today()- timedelta(1))
+    GameId_List = []
+
+    for i in range(len(out['dates'][0]['games'])):
+        GameId_List.append(out['dates'][0]['games'][i]['gamePk'])
+    return(int(str(max(GameId_List))[5:]))
+
+
+def today_last_gameid():
+    """
+    Return last game ID from todays games
+    """
+    out = json_schedule.get_schedule(date.today(),date.today())
     GameId_List = []
 
     for i in range(len(out['dates'][0]['games'])):
@@ -51,79 +55,7 @@ def read_boto_s3(bucket, file):
 mean_elo = 1500
 elo_width = 400
 
-
-def past_game_starter(df, year):
-    """
-    :param df:
-    :param year:
-    :return:
-    """
-    goalie_xwalk = read_boto_s3('hockey-all','hockey_roster_info.csv')
-
-    goalie_xwalk['playerName'] = goalie_xwalk['playerName'].str.upper()
-    goalie_xwalk['playerId'] = goalie_xwalk['playerId'].astype(int)
-    goalie_xwalk = goalie_xwalk\
-        .loc[goalie_xwalk.playerPositionCode == "G",['playerName','playerId']]\
-        .drop_duplicates()
-
-    away_goalie = goalie_xwalk.rename(index=str, columns={"playerName": "Away_Goalie", "playerId": "away_starter_id2"})
-    home_goalie = goalie_xwalk.rename(index=str, columns={"playerName": "Home_Goalie", "playerId": "home_starter_id2"})
-
-    starter_vars = ['Date', 'Game_Id', 'Away_Goalie_Id', 'Away_Goalie', 'Away_Team', 'Home_Goalie_Id',
-                    'Home_Goalie', 'Period', 'Seconds_Elapsed']
-
-    starter_information = df.loc[:, starter_vars]\
-    .fillna(method = 'bfill')\
-    .dropna(subset=['Away_Goalie_Id', 'Home_Goalie_Id', 'Date', 'Game_Id', 'Period', 'Seconds_Elapsed']) \
-    .sort_values(['Date', 'Game_Id', 'Period', 'Seconds_Elapsed'], ascending=True)\
-    .merge(home_goalie, on = ['Home_Goalie'], how = 'left')\
-    .merge(away_goalie, on = ['Away_Goalie'], how = 'left')
-
-    starter_information['Away_Goalie_Id'] = starter_information.apply(lambda x: int(x.away_starter_id2) if x.Away_Goalie_Id == 'NA' else x.Away_Goalie_Id, axis=1)#.astype(int)
-    starter_information['Home_Goalie_Id'] = starter_information.apply(lambda x: int(x.home_starter_id2) if x.Home_Goalie_Id == 'NA' else x.Home_Goalie_Id, axis=1)#.astype(int)
-
-    starter_information = starter_information\
-        .dropna() \
-        .groupby(['Date', 'Game_Id']) \
-        .head(1) \
-        .rename(index=str, columns={"Home_Goalie_Id": "home_starter_id", "Away_Goalie_Id": "away_starter_id"})
-
-    starter_information = starter_information.loc[:, ['Game_Id', 'home_starter_id', 'away_starter_id']].dropna()
-
-    starter_information['id'] = ((year * 1000000) + starter_information['Game_Id'].astype(float))
-
-    return (starter_information.loc[:, ['id', 'home_starter_id', 'away_starter_id']].astype(int))
-
-def update_starter_df(year, start_game_id, end_game_id):
-    """
-    :param year:
-    :param start_game_id:
-    :param end_game_id:
-    :param starter_df:
-    :return:
-    """
-    games_list = json_schedule.get_dates(list(range(start_game_id + 1, int(str(year) + "0" + str(end_game_id)))))
-
-    pbp = scrape_functions.scrape_list_of_games(games_list, False)
-    df = pd.DataFrame(pbp[0], columns=['Game_Id', 'Date', 'Period', 'Event', 'Description', 'Time_Elapsed',
-                                       'Seconds_Elapsed', 'Strength', 'Ev_Zone', 'Type', 'Ev_Team',
-                                       'Home_Zone', 'Away_Team', 'Home_Team', 'p1_name', 'p1_ID', 'p2_name',
-                                       'p2_ID', 'p3_name', 'p3_ID', 'awayPlayer1', 'awayPlayer1_id',
-                                       'awayPlayer2', 'awayPlayer2_id', 'awayPlayer3', 'awayPlayer3_id',
-                                       'awayPlayer4', 'awayPlayer4_id', 'awayPlayer5', 'awayPlayer5_id',
-                                       'awayPlayer6', 'awayPlayer6_id', 'homePlayer1', 'homePlayer1_id',
-                                       'homePlayer2', 'homePlayer2_id', 'homePlayer3', 'homePlayer3_id',
-                                       'homePlayer4', 'homePlayer4_id', 'homePlayer5', 'homePlayer5_id',
-                                       'homePlayer6', 'homePlayer6_id', 'Away_Players', 'Home_Players',
-                                       'Away_Score', 'Home_Score', 'Away_Goalie', 'Away_Goalie_Id',
-                                       'Home_Goalie', 'Home_Goalie_Id', 'xC', 'yC', 'Home_Coach',
-                                       'Away_Coach'])
-
-    new_starters = past_game_starter(df, year)
-
-    return (new_starters)
-
-def encode_data(df, types):
+def encode_data(df, types = {}):
     """
     :param df: data with encoding issues
     :return df2: data without encoding issues
@@ -132,6 +64,25 @@ def encode_data(df, types):
     df2 = pd.read_csv("df.csv", encoding='latin-1', dtype = types)
     os.remove("df.csv")
     return (df2)
+
+
+def goalie_starter_denote(data, team):
+    goalie_list = data['liveData']['boxscore']['teams'][team]['goalies']
+
+    if len(goalie_list) == 1:
+        starter = goalie_list[0]
+    else:
+        ## Bring in all plays in string format
+        allplays = str(data['liveData']['plays']['allPlays'])
+        index = []
+        for i in goalie_list:
+            idx = allplays.find(str(i))
+            idx = idx if idx > 1 else 99999999
+            index = index + [idx]
+            ## Return starter that shows up first in the all plays
+        starter = goalie_list[np.argmin(index)]
+    return (starter)
+
 
 def write_boto_s3(df, bucket, filename):
     """
@@ -160,13 +111,80 @@ def update_elo(home_elo, away_elo, k_factor, home_win):
         change_in_elo = k_factor * (1 - expected_win)
         home_elo += change_in_elo
         away_elo -= change_in_elo
-    else:
+    elif home_win == 0:
         expected_win = expected_result(away_elo, home_elo)
         change_in_elo = k_factor * (1 - expected_win)
         away_elo += change_in_elo
         home_elo -= change_in_elo
 
     return home_elo, away_elo
+
+
+def expand_future_games_possible_starters(game_info_data, num=2, include_replacement=True, remove_list=[]):
+    possible_starters = read_boto_s3('games-all', 'possible-starters.csv')
+
+    # Take last 2 non-injured goalies
+    possible_starters = possible_starters \
+                            .loc[~possible_starters.starter_name.isin(list(remove_list)), :] \
+        .groupby(['team','starter_id'])['last_game_id'].agg(['max']) \
+        .reset_index() \
+        .sort_values('max', ascending=False) \
+        .groupby(['team']).head(num)
+
+    # Include a replacement level goalie?
+    if include_replacement == True:
+        replacement_df = pd.DataFrame({'team': possible_starters['team'].drop_duplicates(),
+                                       'starter_id': 1,
+                                       'starter_name': 'Replacement'
+                                       })
+
+        possible_starters = possible_starters.append(replacement_df)
+
+    past_game_info = game_info_data.loc[game_info_data.status == 'Final', :]
+
+    future_game_info = game_info_data.loc[game_info_data.status != 'Final', :]
+
+    future_vars = ['Game_Id', 'id', 'away_team', 'home_team', 'city', 'city_lat', 'city_long', 'game_start_est',
+                   'game_start_utc', 'season', 'season_type', 'status', 'timeZone', 'timeZone_Num', 'venue']
+
+    # Away teams
+    away_teams = future_game_info['away_team'].drop_duplicates()
+
+    away_possible_starters = possible_starters.loc[
+        possible_starters.team.isin(list(away_teams)), ['starter_id', 'team']] \
+        .rename(index=str, columns={"team": "away_team", "starter_id": "away_starter_id"})
+
+    # Home teams
+    home_teams = future_game_info['home_team'].drop_duplicates()
+
+    home_possible_starters = possible_starters.loc[
+        possible_starters.team.isin(list(home_teams)), ['starter_id', 'team']] \
+        .rename(index=str, columns={"team": "home_team", "starter_id": "home_starter_id"})
+
+    future_game_info = future_game_info.loc[:, future_vars] \
+        .merge(home_possible_starters, on=['home_team'], how='left') \
+        .merge(away_possible_starters, on=['away_team'], how='left')
+
+    future_game_info[['home_starter_id', 'away_starter_id']] = future_game_info[
+        ['home_starter_id', 'away_starter_id']].astype(int)
+
+    return (past_game_info.append(future_game_info))
+
+def replacement_goalie_data(result_windows = [10, 20, 40]):
+
+    replacement_history = pd.DataFrame({'player_id': [1] * max(result_windows),
+                                       'hours_rest': [182.478873] * max(result_windows),
+                                       'travel_km': [1277] * max(result_windows),
+                                       'TOI': [53.292981] * max(result_windows),
+                                       'saves': [21.862375] * max(result_windows),
+                                       'evenSaves': [16.823615] * max(result_windows),
+                                       'powerPlaySaves': [3.017339] * max(result_windows),
+                                       'shots': [24.195463] * max(result_windows),
+                                       'evenShotsAgainst': [18.419514] * max(result_windows),
+                                       'powerPlayShotsAgainst': [3.531877] * max(result_windows)
+                                       })
+
+    return(replacement_history)
 
 
 ### Rolling Weighted Average Functions
@@ -200,6 +218,46 @@ def weighted_mean_offset(x, w, window, offset_decay, var_offset):
     count_back_decay = (offset_decay + np.max(count_back)) - count_back
     weight = count_back_decay / np.sum(count_back_decay)
     return (weight*x_arr).sum()
+
+
+def possible_starters(game_info_data, game_roster_data):
+    game_info_data = game_info_data.loc[game_info_data.status == 'Final', :]
+
+    game_roster_data = game_roster_data.loc[game_roster_data.Pos == 'G', :].drop_duplicates()
+
+    teams_list = game_info_data['home_team'].append(game_info_data['away_team']).drop_duplicates()
+
+    goalie_vars = ['id', 'season', 'home_starter_id', 'away_starter_id', 'home_team', 'away_team']
+    possible_starters = pd.DataFrame()
+
+    for team in teams_list:
+        team_df = game_info_data \
+            .loc[(game_info_data.home_team == team) | (game_info_data.away_team == team), goalie_vars] \
+            .tail(25) \
+            .merge(game_roster_data, on=['id', 'home_team', 'away_team'], how='left')
+
+        team_df['starter_id'] = team_df.apply(lambda x: x.player_id if (x.home_team == team and x.team == 'home')
+                                                                       or (
+                                                                                   x.away_team == team and x.team == 'away') else '',
+                                              axis=1)
+        team_df['starter_name'] = team_df.apply(lambda x: x.fullName if (x.home_team == team and x.team == 'home')
+                                                                        or (
+                                                                                    x.away_team == team and x.team == 'away') else '',
+                                                axis=1)
+        team_df = team_df.loc[team_df['starter_name'] != '', :]
+
+        # Keep 3 most recent goalies used in last 25 games
+        goalies_used = team_df.groupby(['starter_id', 'starter_name'])['id'].agg(['count', 'max']) \
+            .sort_values('max', ascending=False) \
+            .rename(index=str, columns={"count": "game_count_last25", "max": "last_game_id"}) \
+            .reset_index()
+
+        goalies_used['team'] = team
+        goalies_used['starter_id'] = goalies_used['starter_id'].astype(float).astype(int)
+
+        possible_starters = possible_starters.append(goalies_used)
+
+    return (possible_starters)
 
 
 def team_day_games_fun(game_info_data, game_roster_similarity):
@@ -355,9 +413,12 @@ def process_games_ytd(szn,
                       game_info_data,
                       game_roster_data,
                       team_day_ratings_lag,
+                      team_day_elos,
                       arena_geocode):
 
     ## If first game of the season set to 20001
+    game_info_data = game_info_data.loc[game_info_data['status'] == 'Final', :]
+
     if game_info_data.loc[game_info_data.season == int(str(szn) + str(szn + 1)), 'Game_Id'].tail(1).shape[0] > 0:
         prior_game = int(game_info_data.loc[game_info_data.season == int(str(szn) + str(szn + 1)), 'Game_Id'].tail(1))
     else:
@@ -412,6 +473,7 @@ def process_games_ytd(szn,
                                               home_shootout,\
                                               away_shootout], axis=1).reset_index()
 
+
                 game_data = pd.merge(game.reset_index(),\
                                      game_level_data.reset_index(),\
                                      left_index=True, right_index=True).drop(['index_x', 'index_y'], axis=1)
@@ -428,19 +490,18 @@ def process_games_ytd(szn,
 
                 game_data['game_start_utc'] = pd.to_datetime(data['gameData']['datetime']['dateTime'], utc=True)
 
-                game_data['game_start_est'] = game_data['game_start_utc']\
-                        + pd.Timedelta(hours=int(game_data['timeZone_Num']))
+                game_data['game_start_est'] = game_data['game_start_utc']  + pd.Timedelta(hours=int(game_data['timeZone_Num']))
 
-                #game_data['home_starter_id'] = data['liveData']['boxscore']['teams']['home']['goalies'][0]
-                #game_data['away_starter_id'] = data['liveData']['boxscore']['teams']['away']['goalies'][0]
+                game_data['home_starter_id'] = goalie_starter_denote(data, 'home')
+                game_data['away_starter_id'] = goalie_starter_denote(data, 'away')
 
                 # Referees for the game
                 refs = []
                 lines = []
 
-                for i in range(len(data['liveData']['boxscore']['officials'])):
-                    name = data['liveData']['boxscore']['officials'][i]['official']['fullName']
-                    ref_type = data['liveData']['boxscore']['officials'][i]['officialType']
+                for j in range(len(data['liveData']['boxscore']['officials'])):
+                    name = data['liveData']['boxscore']['officials'][j]['official']['fullName']
+                    ref_type = data['liveData']['boxscore']['officials'][j]['officialType']
                     if ref_type == 'Referee':
                         refs = refs + [name]
                     else:
@@ -553,7 +614,7 @@ def process_games_ytd(szn,
                 game_data['status'] = data['gameData']['status']['detailedState']
 
                 game_info = game_info.append(game_data)
-            print(str(szn) + ", Game:" + i)
+
         except:
             continue
 
@@ -571,7 +632,6 @@ def process_games_ytd(szn,
     # Replace every occurrence of ATL with WPG
     game_info['home_team'] = game_info.apply(lambda x: x.home_team if x.home_team != 'ATL' else 'WPG', axis=1)
     game_info['away_team'] = game_info.apply(lambda x: x.away_team if x.away_team != 'ATL' else 'WPG', axis=1)
-
 
     ## Game by game roster similarity df
     team_game_roster_similarity = pd.DataFrame()
@@ -608,9 +668,9 @@ def process_games_ytd(szn,
     print("Roster Similarity Completed")
 
     ## Append data (drop 'season' first for new xwalk column)
-    game_info_data = game_info_data.append(game_info)
+    ## Drop previously scheduled games
+    game_info_data = game_info_data.loc[game_info_data.status == 'Final',:].append(game_info)
     game_roster_data = game_roster_data.append(game_roster)
-
 
     ## Start Elo Ratings
     ### Track game results
@@ -637,10 +697,10 @@ def process_games_ytd(szn,
 
             ## Game outcome
             home_win = game['home_win']
-            shootout_final = game['shootout_final']
+            shootout_final = game['shootout_final']#.fillna(False)
 
             ## Win margin
-            win_margin = game['win_margin']
+            win_margin = game['win_margin']#.fillna(0)
 
             metrics = ['elo_k4', 'elo_k4_wm4', 'elo_k4_wm4_SO2', 'elo_k4_wm2_SO2', 'elo_k8_wm8_SO2']
 
@@ -650,7 +710,7 @@ def process_games_ytd(szn,
 
             for metric in metrics:
 
-                if metric == 'elo_k4':
+                if (metric == 'elo_k4') and (win_margin > -1):
                     k = 4
                 elif metric == 'elo_k4_wm4':
                     k = (4 + (4 * win_margin))
@@ -680,27 +740,39 @@ def process_games_ytd(szn,
 
     print("Elo Metrics updated")
 
+    # Fill elo scores to today
+    team_day_ratings_lag2 = pd.DataFrame()
+    for team in team_list:
+        team_data = team_day_ratings_lag.loc[team_day_ratings_lag.team == team, :] \
+            .append(pd.DataFrame({'date': [date.today()]})).fillna(method='ffill')
+        team_day_ratings_lag2 = team_day_ratings_lag2.append(team_data)
+
     ## Create datasets for both home and away team
-    away_team_ratings = team_day_ratings_lag.copy()
-    home_team_ratings = team_day_ratings_lag.copy()
+    away_team_ratings = team_day_ratings_lag2.copy()
+    home_team_ratings = team_day_ratings_lag2.copy()
 
     ## Label appropriately
     away_team_ratings.columns = ['away_' + str(col) if col != 'date' else col for col in away_team_ratings.columns]
     home_team_ratings.columns = ['home_' + str(col) if col != 'date' else col for col in home_team_ratings.columns]
 
-    team_day_elos = pd.merge(pd.merge(team_day_games,
-                                      home_team_ratings,
-                                      on=['date', 'home_team'], how='left'),
+    team_day_elos_new = pd.merge(pd.merge(team_day_games,
+                            home_team_ratings,
+                             on=['date', 'home_team'], how='left'),
                              away_team_ratings,
-                             on=['date', 'away_team'], how='left')
+                             on=['date', 'away_team'], how='left').drop_duplicates()
+
+    team_day_elos = team_day_elos.append(team_day_elos_new)
+
+    team_day_elos['date'] = pd.to_datetime(team_day_elos['date']).dt.date
 
     return (game_info_data, game_roster_data, team_day_elos, team_day_ratings_lag)
 
 
 def goalie_game_features(game_info_data,
-                    goalie_rolling_df,
-                    goalie_features = ['wa_hours_rest', 'wa_travel_km', 'wa_PP_svPct', 'wa_EV_svPct', 'wa_svPct'],
-                    weights = ['_w12_o48', '_w12_o24', '_w6_o24', '_w6_o48']):
+                         goalie_rolling_df,
+                         control_feats=['hours_rest', 'travel_km'],
+                         result_weights=['_w10_o48', '_w20_o48', '_w40_o48', '_w10_o168', '_w20_o168', '_w40_o168'],
+                         control_weights=['_w10_o24', '_w10_o48']):
     """
     Converts goalie-level data into game-starter level data, assigning to home and away files
     :param game_info_data: all games
@@ -709,6 +781,15 @@ def goalie_game_features(game_info_data,
     :param weights:
     :return:
     """
+
+    for weight in result_weights:
+        goalie_rolling_df['wa_PP_svPct' + str(weight)] = goalie_rolling_df['wa_powerPlaySaves' + str(weight)] / \
+                                                         goalie_rolling_df['wa_powerPlayShotsAgainst' + str(weight)]
+        goalie_rolling_df['wa_EV_svPct' + str(weight)] = goalie_rolling_df['wa_evenSaves' + str(weight)] / \
+                                                         goalie_rolling_df['wa_evenShotsAgainst' + str(weight)]
+        goalie_rolling_df['wa_svPct' + str(weight)] = goalie_rolling_df['wa_saves' + str(weight)] / goalie_rolling_df[
+            'wa_shots' + str(weight)]
+
     goalie_rolling_df['id'] = goalie_rolling_df['id'].astype(int)
     goalie_rolling_df['player_id'] = goalie_rolling_df['player_id'].astype(int)
 
@@ -716,49 +797,55 @@ def goalie_game_features(game_info_data,
     game_info_data['home_starter_id'] = game_info_data['home_starter_id'].astype(int)
     game_info_data['away_starter_id'] = game_info_data['away_starter_id'].astype(int)
 
-    goalie_features = ['wa_hours_rest', 'wa_travel_km', 'wa_PP_svPct', 'wa_EV_svPct', 'wa_svPct']
-    weights = ['_w12_o48', '_w12_o24', '_w6_o24', '_w6_o48']
-    all_features = [str(feat) + str(w) for feat in goalie_features for w in weights]
+    # goalie_features = ['wa_hours_rest', 'wa_travel_km', 'wa_PP_svPct', 'wa_EV_svPct', 'wa_svPct']
 
-    #home_goalie_metrics, away_goalie_metrics = goalie_game_features(game_info_data, goalie_rolling_df)
+    result_features = [str(feat) + str(w) for feat in ['wa_PP_svPct', 'wa_EV_svPct', 'wa_svPct'] for w in
+                       result_weights]
+    control_features = [str(feat) + str(w) for feat in ['wa_hours_rest', 'wa_travel_km'] for w in control_weights]
+
+    # home_goalie_metrics, away_goalie_metrics = goalie_game_features(game_info_data, goalie_rolling_df)
     ## Find 80/20 values to impute
-    p80_results = goalie_rolling_df.loc[:,
-                  [str(feat) + str(w) for feat in ['wa_hours_rest', 'wa_travel_km'] for w in weights]] \
+    p50_results = goalie_rolling_df.loc[:,
+                  [str(feat) + str(w) for feat in ['wa_hours_rest', 'wa_travel_km'] for w in control_weights]
+                        + control_feats] \
         .dropna(axis=0, how='any') \
-        .quantile(q=0.8, axis=0)
+        .quantile(q=0.5, axis=0)
 
-    p20_results = goalie_rolling_df.loc[:,
-                  [str(feat) + str(w) for feat in ['wa_PP_svPct', 'wa_EV_svPct', 'wa_svPct'] for w in weights]] \
+    p10_results = goalie_rolling_df.loc[:,
+                  [str(feat) + str(w) for feat in ['wa_PP_svPct', 'wa_EV_svPct', 'wa_svPct'] for w in result_weights]] \
         .dropna(axis=0, how='any') \
-        .quantile(q=0.2, axis=0)
+        .quantile(q=0.1, axis=0)
 
     ## Home start metrics
     home_goalie_metrics = game_info_data \
-        .loc[:, ['id', 'home_starter_id']] \
-        .merge(goalie_rolling_df.loc[:, ['id', 'player_id'] + all_features],
+                              .loc[:, ['id', 'home_starter_id']] \
+        .drop_duplicates() \
+        .merge(goalie_rolling_df.loc[:, ['id', 'player_id'] + control_features + result_features + control_feats],
                left_on=['id', 'home_starter_id'],
                right_on=['id', 'player_id'],
-               how='inner') \
-        .fillna(value=p80_results.append(p20_results)) \
+               how='left') \
+        .fillna(value=p50_results.append(p10_results)) \
         .drop(['player_id'], axis=1)
 
-    home_goalie_metrics.columns = ['id', 'home_starter_id'] + ['home_starter_' + str(feat) for feat in all_features]
+    home_goalie_metrics.columns = ['id', 'home_starter_id'] + ['home_starter_' + str(feat) for feat in
+                                                               control_features + result_features + control_feats]
 
     away_goalie_metrics = game_info_data \
-        .loc[:, ['id', 'away_starter_id']] \
-        .merge(goalie_rolling_df.loc[:, ['id', 'player_id'] + all_features],
+                              .loc[:, ['id', 'away_starter_id']] \
+        .drop_duplicates() \
+        .merge(goalie_rolling_df.loc[:, ['id', 'player_id'] + control_features + result_features + control_feats],
                left_on=['id', 'away_starter_id'],
                right_on=['id', 'player_id'],
-               how='inner') \
-        .fillna(value=p80_results.append(p20_results)) \
+               how='left') \
+        .fillna(value=p50_results.append(p10_results)) \
         .drop(['player_id'], axis=1)
 
-    away_goalie_metrics.columns = ['id', 'away_starter_id'] + ['away_starter_' + str(feat) for feat in all_features]
+    away_goalie_metrics.columns = ['id', 'away_starter_id'] + ['away_starter_' + str(feat) for feat in
+                                                               control_features + result_features + control_feats]
 
-    return(home_goalie_metrics, away_goalie_metrics)
+    return (home_goalie_metrics, away_goalie_metrics)
 
-
-def team_game_features_ytd(szn, game_info_data, team_day_elos, team_game_features, goalie_rolling_df, model_df):
+def team_game_features_ytd(szn, game_info_data, team_day_elos, team_game_features, goalie_rolling_df, model_df, remove_list):
     """
     :param szn:
     :param game_info_data_geocode:
@@ -768,24 +855,29 @@ def team_game_features_ytd(szn, game_info_data, team_day_elos, team_game_feature
     :return:
     """
     pd.options.mode.chained_assignment = None
-    roll_features = ['game_GF', 'game_GA', 'game_SF', 'game_SA', 'game_PPGF', 'game_PKGA', 'game_PPAtt', 'game_PKAtt']
-    windows = [8, 12]
-    hour_offsets = [24, 48]
+    roll_features = ['game_skater_sim','game_GF', 'game_GA', 'game_SF', 'game_SA', 'game_PPGF', 'game_PKGA', 'game_PPAtt', 'game_PKAtt']
+    windows = [10, 20, 40]
+    hour_offsets = [48, 168]
 
     ## Prior season metrics
     game_info_data = game_info_data.loc[round(game_info_data.season.astype(float) / 10000) >= (szn - 1), :]
 
-    ## Append to current metrics
-    team_game_features = team_game_features.loc[round(team_game_features.id / 1000000) < (szn - 1), :]
+    game_info_complete = game_info_data#.loc[game_info_data.status == 'Final', :]
 
+    ## Append to current metrics
+    #team_game_features = team_game_features.loc[round(team_game_features.id / 1000000) < szn, :]
+    team_game_features_new = pd.DataFrame()
+
+    print("Prior team game features shape: " + str(team_game_features.shape))
     team_list = game_info_data['home_team'].drop_duplicates()
 
     ## Loop through each team
     for team in team_list:
 
-        team_df = game_info_data.loc[
-                  (game_info_data['home_team'] == team) | (game_info_data['away_team'] == team), :] \
-            .sort_values(['id'])
+        team_df = game_info_complete.loc[
+                  (game_info_complete['home_team'] == team) | (game_info_complete['away_team'] == team), :] \
+            .sort_values(['game_start_est'])\
+            .merge(team_day_elos.loc[:,['id','away_skater_sim','home_skater_sim']], on='id', how='left')
 
         ## Last game geolocation
         team_df['last_city_lat'] = team_df.groupby('season')['city_lat'].shift(1).fillna(method='bfill').fillna(method='ffill')
@@ -802,6 +894,7 @@ def team_game_features_ytd(szn, game_info_data, team_day_elos, team_game_feature
         team_df['hours_rest'] = (pd.to_datetime(team_df.game_start_est, utc=True) - \
                                  pd.to_datetime(team_df.last_game_start_est, utc=True)). \
             astype('timedelta64[h]').fillna(method='bfill')
+        team_df['hours_rest'] = team_df['hours_rest'].apply(lambda x: (24 * 7) if x > (24 * 7) else x)
 
         team_df['team'] = team
 
@@ -822,21 +915,34 @@ def team_game_features_ytd(szn, game_info_data, team_day_elos, team_game_feature
         team_df['game_PKAtt'] = team_df.apply(
             lambda x: x.home_powerPlayOpportunities if x.home_team != team else x.away_powerPlayOpportunities, axis=1)
 
+        team_df['game_skater_sim'] = team_df.apply(
+            lambda x: x.home_skater_sim if x.home_team == team else x.away_skater_sim, axis=1)
+
+        team_df = team_df.fillna(value=0)
+
         ## Roll-up weighted sum of each metric
         for i in roll_features:
             for window in windows:
                 for hour_offset in hour_offsets:
                     output = roll(team_df, window+1).apply(
                         lambda x: weighted_mean_offset(x[i], x.hours_rest, window, hour_offset, 1)) \
-                        .rename("wa_" + str(i) + "_w" + str(window) + "_" + str(hour_offset) + "hr")
+                        .rename("wa_" + str(i) + "_w" + str(window) + "_o" + str(hour_offset))
 
                     team_df = team_df.join(output)
 
         team_df = team_df.loc[:, ['id', 'home_team', 'away_team', 'team', 'travel_km', 'hours_rest'] \
-                                 + ['wa_' + str(feat) + "_w" + str(window) + "_" + str(hour_offset) + "hr" \
+                                 + ['wa_' + str(feat) + "_w" + str(window) + "_o" + str(hour_offset) \
                                     for feat in roll_features for window in windows for hour_offset in hour_offsets]]
 
-        team_game_features = team_game_features.append(team_df)
+        team_game_features_new = team_game_features_new.append(team_df)
+
+    team_game_features_new = team_game_features_new.loc[team_game_features_new['id'] > max(team_game_features['id']), :]
+
+    print("New team game features shape: " + str(team_game_features_new.shape))
+    print("Old team game features shape: " + str(team_game_features.shape))
+
+    team_game_features = team_game_features.append(team_game_features_new)
+    print("Updated team game features shape: " + str(team_game_features.shape))
 
     print("Team Season YTD Features updated")
 
@@ -854,27 +960,32 @@ def team_game_features_ytd(szn, game_info_data, team_day_elos, team_game_feature
     home_team_game_features.columns = ['home_' + str(col) if col != 'id' else col for col in
                                        home_team_game_features.columns]
 
-    write_boto_s3(game_info_data, 'games-all', 'game_info_data_prior.csv')
-    write_boto_s3(goalie_rolling_df, 'games-all', 'goalie_rolling_df_prior.csv')
+    ## Only update new data
+    model_df = model_df.loc[model_df.status == 'Final',:].dropna(axis=0)
+    last_id = max(model_df['id'])
 
-    home_goalie_metrics, away_goalie_metrics = goalie_game_features(game_info_data, goalie_rolling_df)
+    game_info_update = game_info_data.loc[game_info_data.id.astype(float) > last_id, :]
+    team_day_elos = team_day_elos.loc[team_day_elos.id.astype(float) > last_id, :]
+
+    game_info_update = expand_future_games_possible_starters(game_info_update,2,True,remove_list)
+
+    home_goalie_metrics, away_goalie_metrics = goalie_game_features(game_info_update, goalie_rolling_df)
 
     ## Remove games in 1997 where rolling average didn't have enough games
     model_df1 = team_day_elos\
-                    .merge(home_team_game_features, on=['id', 'home_team'], how='left')\
-                    .merge(away_team_game_features, on=['id', 'away_team'], how='left') \
-                    .merge(game_info_data.loc[:,['id','home_starter_id','away_starter_id']], on=['id'], how='left')\
-                    .merge(home_goalie_metrics, on=['id', 'home_starter_id'], how='left')\
-                    .merge(away_goalie_metrics, on=['id', 'away_starter_id'], how='left') \
+                    .merge(home_team_game_features, on=['id','home_team'], how='left')\
+                    .merge(away_team_game_features, on=['id','away_team'], how='left') \
+                    .merge(game_info_update.loc[:,['id','status','home_starter_id','away_starter_id']], on=['id'], how='left')\
+                    .merge(home_goalie_metrics, on=['id','home_starter_id'], how='left')\
+                    .merge(away_goalie_metrics, on=['id','away_starter_id'], how='left') \
                     .drop(['away_scores', 'home_scores'], axis=1)
 
     model_df1['season'] = model_df1['id'].apply(str).str[:4].apply(int)
 
     print("New model data shape:" + str(model_df1.shape))
 
-    print("Prior model data shape:" + str(model_df.shape))
-
     model_df = model_df.append(model_df1)
+    model_df['season'] = model_df['id'].apply(str).str[:4].apply(int)
 
     ## Limit to post lockout
     model_df = model_df.loc[model_df.season > 2004, :]
@@ -883,276 +994,17 @@ def team_game_features_ytd(szn, game_info_data, team_day_elos, team_game_feature
 
     return (model_df, team_game_features)
 
-
-
-def model_df(model_df,
-             windows=[8, 12],
-             hour_offsets=[24, 48],
-             elo_metrics=['elo_k4_wm4', 'elo_k4_wm4_SO2', 'elo_k4_wm2_SO2'],
-             model_list=['lr_cvsearch', 'gnb_isotonic', 'rf_isotonic', 'mlp_isotonic', 'lr_model'],
-             game_features=['game_GF', 'game_GA', 'game_SF', 'game_SA', 'game_PPGF', 'game_PKGA', 'game_PPAtt',
-                            'game_PKAtt'],
-             standard_features = ['hours_rest', 'travel_km', 'roster_sim', 'skater_sim']):
-    """
-    :param model_df:
-    :param windows:
-    :param hour_offsets:
-    :param elo_metrics:
-    :param model_list:
-    :return:
-    """
-
-    all_game_probs = model_df.loc[:, ['home_win', 'id', 'season', 'shootout_final', 'win_margin']]
-
-    ######
-    # Splitting data into X and Y
-    ######
-    complete_feature_set = ["wa_" + str(feature) + "_w" + str(window) + "_" + str(offset) + "hr"
-                            for feature in game_features
-                            for window in windows
-                            for offset in hour_offsets] + elo_metrics + standard_features
-
-    complete_feature_list = [str(venue) + "_" + feat for venue in ['home', 'away'] for feat in complete_feature_set]
-
-    train_X, test_X, train_Y, test_Y, train_Szn, test_Szn = train_test_split(model_df.loc[:, complete_feature_list],
-                                                                             model_df.loc[:, 'home_win'],
-                                                                             model_df.loc[:, 'season'],
-                                                                             stratify=model_df.loc[:, 'home_win'],
-                                                                             test_size=0.3, random_state=42)
-
-    ## Validate over seasons
-    gkf = GroupKFold(n_splits=len(train_Szn.unique()))
-
-    ## Scale data to train set
-    scaler = StandardScaler()
-    scaler.fit(train_X)
-    train_X = scaler.transform(train_X)
-    test_X = scaler.transform(test_X)
-    # Save scaler
-    s3_resource = boto3.resource('s3')
-    pickle_byte_obj = pickle.dumps(scaler)
-    s3_resource.Object('games-all', 'Models/training_set_scaler').put(Body=pickle_byte_obj)
-
-    train_df = pd.DataFrame(train_X, columns=complete_feature_list)
-    test_df = pd.DataFrame(test_X, columns=complete_feature_list)
-
-    ## Scale full dataframe
-    full_df = model_df.loc[:, complete_feature_list]
-    full_df = scaler.transform(full_df)
-    full_df = pd.DataFrame(full_df, columns=complete_feature_list)
-
-    ######
-    # Model initializations
-    ######
-    # Random Forest
-    rf = RandomForestClassifier(n_estimators=200,
-                                max_depth=80,
-                                criterion='entropy',
-                                class_weight='balanced',
-                                min_samples_leaf=3,
-                                min_samples_split=8,
-                                random_state=24)
-    rf_isotonic = CalibratedClassifierCV(rf, cv=5)  # , method='isotonic')
-
-    # MultiLayer Perceptron
-    mlp = MLPClassifier(learning_rate='adaptive',
-                        hidden_layer_sizes=(10, 10, 10))
-    mlp_isotonic = CalibratedClassifierCV(mlp, cv=5)  # , method='isotonic')
-
-    ## Gaussian Naive-Bayes
-    gnb = GaussianNB()
-    gnb_isotonic = CalibratedClassifierCV(gnb, cv=5)  # , method='isotonic')
-
-    # XGBoost
-    xgb_init = XGBRegressor(objective='binary:logistic', alpha=10, n_estimators=10)
-
-    xgb_test_params = {'colsample_bytree': [0.3, 0.5, 0.7], 'learning_rate': [0.05, 0.1],
-                       'max_depth': [5, 10, 25]}
-    xgb_model = sklearn.model_selection.RandomizedSearchCV(estimator=xgb_init,
-                                   param_distributions=xgb_test_params,
-                                   cv=gkf,
-                                   n_iter=10)
-
-    # Logistic Regression
-    lr_init = sklearn.linear_model.LogisticRegression()
-
-    lr_param_grid = {"penalty": ['l1', 'l2'], 'C': [0.001, 0.01, 0.1, 1, 10, 100, 1000]}
-
-    ## LR Search
-    lr_cvsearch = sklearn.model_selection.GridSearchCV(lr_init, lr_param_grid, scoring='neg_log_loss', cv=10, verbose=0,
-                                                       n_jobs=-1)
-
-    ## LM Search
-    lr_model = sklearn.model_selection.RandomizedSearchCV(estimator=lr_init,
-                                  param_distributions=lr_param_grid,
-                                  cv=gkf,
-                                  random_state=1, n_iter=10, verbose=0, n_jobs=-1)
-
-    all_results = pd.DataFrame()
-    test_predictions = pd.DataFrame()
-
-    for window in windows:
-        for offset in hour_offsets:
-            for metric in elo_metrics:
-
-                print("metric: " + str(metric),
-                      ", window: " + str(window),
-                      ", offset: " + str(offset))
-
-                # Set of features
-                feature_set = ["wa_" + str(feature) + "_w" + str(window) + "_" + str(offset) + "hr"
-                               for feature in game_features] + standard_features + [metric]
-
-                feature_list = [str(venue) + "_" + feat for venue in ['home', 'away'] for feat in feature_set]
-
-                full_scaled = full_df.loc[:, feature_list]
-
-                # Model DF
-                train_X0 = train_df.loc[:, feature_list].as_matrix()
-                test_X0 = test_df.loc[:, feature_list].as_matrix()
-
-                # LR1
-                lr_cvsearch.fit(train_X0, train_Y)
-
-                lr_cvsearch_out = model_complete_scoring(lr_cvsearch,'games-all',
-                                                         'Models/lr_cvsearch_' + str(metric) + '_w' + str(window) + '_o' + str(
-                                                             offset),
-                                                         train_X0, train_Y, test_X0, test_Y, "proba")
-
-                # Gaussian Naive-Bayes
-                gnb_isotonic.fit(train_X0, train_Y)
-
-                gnb_isotonic_out = model_complete_scoring(gnb_isotonic,'games-all',
-                                                          'Models/gnb_isotonic_' + str(metric) + '_w' + str(
-                                                              window) + '_o' + str(offset),
-                                                          train_X0, train_Y, test_X0, test_Y, "proba")
-
-                # MultiLayer Perceptron
-                mlp_isotonic.fit(train_X0, train_Y)
-
-                mlp_isotonic_out = model_complete_scoring(mlp_isotonic,'games-all',
-                                                          'Models/mlp_isotonic_' + str(metric) + '_w' + str(
-                                                              window) + '_o' + str(offset),
-                                                          train_X0, train_Y, test_X0, test_Y, "proba")
-
-                # Random Forest
-                rf_isotonic.fit(train_X0, train_Y)
-
-                rf_isotonic_out = model_complete_scoring(rf_isotonic,'games-all',
-                                                         'Models/rf_isotonic_' + str(metric) + '_w' + str(window) + '_o' + str(
-                                                             offset),
-                                                         train_X0, train_Y, test_X0, test_Y, "proba")
-
-                # XGBoost
-                xgb_model.fit(train_X0, train_Y, groups=train_Szn)
-
-                xgb_model_out = model_complete_scoring(xgb_model,'games-all',
-                                                       'Models/xgb_model_' + str(metric) + '_w' + str(window) + '_o' + str(
-                                                           offset),
-                                                       train_X0, train_Y, test_X0, test_Y, "predict")
-
-                # Logisitc model
-                lr_model.fit(train_X0, train_Y, groups=train_Szn)
-
-                lr_model_out = model_complete_scoring(lr_model,'games-all',
-                                                      'Models/lr_model_' + str(metric) + '_w' + str(window) + '_o' + str(
-                                                          offset),
-                                                      train_X0, train_Y, test_X0, test_Y, "proba")
-
-                blend_pred = pd.DataFrame(dict(lr_pred=lr_model_out[4],
-                                               xgb_pred=xgb_model_out[4],
-                                               gnb_pred=gnb_isotonic_out[4],
-                                               mlp_pred=gnb_isotonic_out[4],
-                                               rf_pred=rf_isotonic_out[4]
-                                               )).mean(axis=1)
-
-                blend_logloss = log_loss(test_Y, blend_pred)
-                blend_brier_score = sklearn.metrics.brier_score_loss(test_Y, blend_pred)
-
-                # Calibration Correlation
-                calibration_df = pd.concat(
-                    [round(blend_pred, 2).reset_index(drop=True), pd.Series(test_Y).reset_index(drop=True)], axis=1)
-                calibration_df.columns = ['pred', 'home_win']
-                calibration_agg = calibration_df.groupby('pred')['home_win'].agg(['mean', 'count']).reset_index()
-
-                blend_calibration_corr = wcorr(np.array(calibration_agg['pred']),
-                                               np.array(calibration_agg['mean']), np.array(calibration_agg['count']))
-
-                cols = ["acc", "logloss", "brier_score", "cal_corr"]
-
-                model_results = pd.concat(
-                    [pd.DataFrame(np.array(
-                        [metric, window, offset, blend_logloss, blend_brier_score, blend_calibration_corr]).reshape(1,
-                                                                                                                    6),
-                                  columns=['metric', 'window', 'offset', 'blend_logloss', 'blend_brier_score',
-                                           'blend_cal_corr']),
-                     pd.DataFrame(np.array(lr_cvsearch_out[:4]).reshape(1, 4),
-                                  columns=["lrsearch_" + str(col) for col in cols]),
-                     pd.DataFrame(np.array(gnb_isotonic_out[:4]).reshape(1, 4),
-                                  columns=["gnb_" + str(col) for col in cols]),
-                     pd.DataFrame(np.array(mlp_isotonic_out[:4]).reshape(1, 4),
-                                  columns=["mlp_" + str(col) for col in cols]),
-                     pd.DataFrame(np.array(rf_isotonic_out[:4]).reshape(1, 4),
-                                  columns=["rf_" + str(col) for col in cols]),
-                     pd.DataFrame(np.array(lr_model_out[:4]).reshape(1, 4), columns=["lr_" + str(col) for col in cols]),
-                     pd.DataFrame(np.array(xgb_model_out[:4]).reshape(1, 4),
-                                  columns=["xgb_" + str(col) for col in cols])
-                     ], axis=1)
-
-                all_results = all_results.append(model_results)
-
-                write_boto_s3(all_results, 'games-all', 'prediction_results_param.csv')
-
-                test_predictions = pd.concat([pd.DataFrame(np.array([metric, window, offset]).reshape(1, 3)),
-                                              test_Y.reset_index(drop=True),
-                                              lr_cvsearch_out[4].reset_index(drop=True),
-                                              gnb_isotonic_out[4].reset_index(drop=True),
-                                              mlp_isotonic_out[4].reset_index(drop=True),
-                                              rf_isotonic_out[4].reset_index(drop=True),
-                                              lr_model_out[4].reset_index(drop=True),
-                                              xgb_model_out[4].reset_index(drop=True),
-                                              blend_pred.reset_index(drop=True)
-                                              ], axis=1).fillna(method='ffill')
-
-                test_predictions.columns = ['metric', 'window', 'offset', 'home_win', 'lrsearch_pred', 'gnb_pred',
-                                            'mlp_pred', 'rf_pred', 'lr_pred', 'xgb_pred', 'blend_pred']
-
-                test_predictions = test_predictions.append(test_predictions)
-
-                write_boto_s3(test_predictions, 'games-all', 'test_results_param.csv')
-
-                ######
-                ## Ensemble models
-                ######
-                for model in model_list:
-                    # Load models
-                    s3 = boto3.resource('s3')
-                    with io.BytesIO() as data:
-                        s3.Bucket("games-all").download_fileobj('Models/' + \
-                                    str(metric) + '_w' + str(window) + '_o' + str(offset), data)
-                        data.seek(0)  # move back to the beginning after writing
-                        m = pickle.load(data)
-
-                    # Try
-                    if model != 'xgb_model':
-                        pred = pd.DataFrame(m.predict_proba(full_scaled)).iloc[:, 1]
-                    else:
-                        pred = pd.Series(m.predict(full_scaled))
-
-                    pred = pred.to_frame()
-                    pred.columns = [str(model) + "_" + str(metric) + '_w' + str(window) + '_o' + str(offset)]
-                    all_game_probs = pd.concat([all_game_probs.reset_index(drop=True),
-                                                pred], axis=1)
-
-    return (all_game_probs)
-
-
 def goalie_data(game_roster_data,
                 game_info_data,
                 season_start,
-                goalie_rolling_df,
-                windows=[6, 12],
-                hour_offsets=[24, 48]):
+                goalie_rolling_df):
+
+    control_windows = [10]
+    control_offsets = [24, 48]
+
+    result_windows = [10, 20, 40]
+    result_offsets = [48, 168]
+
 
     metrics = ['fullName', 'id', 'game_start_est', 'city_lat', 'city_long', 'TOI', 'season', 'Pos', 'timeOnIce',
                'saves', 'shots', 'decision', 'evenSaves', 'evenShotsAgainst', 'player_id', 'powerPlaySaves',
@@ -1165,17 +1017,29 @@ def goalie_data(game_roster_data,
 
     last_id = max(goalie_rolling_df['id'])
 
-    game_info_new = game_info_data.loc[game_info_data.id.astype(float) > max(goalie_rolling_df['id']), :]
-
-    print("New games to update for goalie data :" + str(game_info_new.shape))
-    # Prior season metrics
-    game_roster = game_roster_data.loc[round(game_roster_data.season.astype(float) / 10000) >= (season_start - 1) , :]
-    game_roster = game_roster.loc[game_roster['Pos'] == "G", :]
-
-    game_info = game_info_data.loc[round(game_info_data.season.astype(float) / 10000) >= (season_start - 1), :]
-
     ## Prep data
-    game_info['game_start_est'] = pd.to_datetime(game_info['game_start_est'], utc=True)
+    game_info_data['game_start_est'] = pd.to_datetime(game_info_data['game_start_est'], utc=True)
+
+    game_info_update = game_info_data.loc[(game_info_data['status'] == 'Final') &
+                                          (game_info_data.id.astype(float) > last_id), :]
+
+    # Prior season metrics
+    game_roster = game_roster_data.loc[round(game_roster_data.season.astype(float) / 10000) >= (season_start - 1), :]
+    game_roster = game_roster.loc[game_roster['Pos'] == "G", :]
+        #.merge(game_info_update, on = ['id'], how = 'inner')
+
+
+    ## Find future games too
+    game_info_future = game_info_data.loc[game_info_data['status'] != 'Final', :]
+
+    game_info_future = expand_future_games_possible_starters(game_info_future, 2, False)
+
+    game_info_update = game_info_update.append(game_info_future)
+
+    game_info_update[['away_starter_id', 'home_starter_id']] = game_info_update[
+        ['away_starter_id', 'home_starter_id']].astype(float).astype(int)
+
+    print("New games to update for goalie data :" + str(game_info_update.shape))
 
     ## Prep data
     game_roster['TOImin'], game_roster['TOIsec'] = game_roster['timeOnIce'].str.split(':', 1).str
@@ -1185,24 +1049,37 @@ def goalie_data(game_roster_data,
                           game_roster['TOIsec'].str[:2].str.lstrip('0').apply(lambda x: 0 if x == '' else x).astype(
                               int)) / 60
 
+    game_info = game_info_data.loc[round(game_info_data.season.astype(float) / 10000) >= (season_start - 1), :]
+
+    game_info_future2 = pd.melt(game_info_future.loc[:,
+                                ['id', 'game_start_utc', 'game_start_est', 'city_lat', 'home_team', 'away_team',
+                                 'city_long', 'away_starter_id', 'home_starter_id']],
+                                id_vars=['id', 'game_start_utc', 'game_start_est', 'home_team', 'away_team', 'city_lat',
+                                         'city_long'],
+                                value_vars=['away_starter_id', 'home_starter_id'],
+                                var_name='season',
+                                value_name='player_id') \
+        .merge(game_roster.loc[:, ['player_id', 'fullName', 'Pos']].drop_duplicates(), on=['player_id'], how='left') \
+        .drop_duplicates()
+
+    game_info_future2['player_id'] = game_info_future2['player_id'].astype(int)
+
+    ## Join completed games and then append new goalie combinations
+    game_roster = game_info.loc[:, ['id', 'game_start_utc', 'game_start_est', 'city_lat', 'city_long']] \
+        .merge(game_roster, on=['id'], how='inner') \
+        .append(game_info_future2) \
+        .sort_values('id', ascending=True)
+
     game_roster['season'] = game_roster['id'].astype(str).str[:4]
-    game_roster = game_roster \
-        .merge(game_info.loc[:, ['id', 'game_start_utc', 'game_start_est', 'city_lat', 'city_long']], on='id',
-               how='inner') \
-        .sort_values('game_start_est', ascending=True)
 
     # Split data
-    goalie_data = game_roster.loc[game_roster.Pos == 'G', metrics]
-    goalie_out = game_roster.loc[game_roster.Pos == 'G', output_metrics]
+    goalie_data = game_roster.loc[:, metrics]
+    goalie_out = game_roster.loc[:, output_metrics]
 
     goalie_df = pd.DataFrame()
 
-    ## Unique goalie IDs
-    goalie_game_totals = goalie_data.groupby(['player_id'])['id'].count()
-
-    game_info_new = game_info_data.loc[game_info_data.id > max(goalie_rolling_df['id']), :]
-
-    goalie_id = list(game_info_new['home_starter_id'].append(game_info_new['away_starter_id']).drop_duplicates())
+    goalie_id = list(
+        game_info_update['home_starter_id'].append(game_info_update['away_starter_id']).drop_duplicates().dropna())
 
     print(str(len(goalie_id)) + " goalies updating")
 
@@ -1213,9 +1090,12 @@ def goalie_data(game_roster_data,
         goalie_select_out = goalie_out.loc[goalie_out.player_id.astype(int) == goalie, :].reset_index(drop=True) \
             .sort_values('game_start_est', ascending=True).tail(50)
 
-        # print(str(goalie) + " ID - " + str(goalie_select_out.shape[0]) + " Games")
+        print(str(goalie) + " ID - " + str(goalie_select_out.shape[0]) + " Games")
 
-        if goalie_select_out.shape[0] > 1:
+        goalie_select_out['game_count'] = goalie_select_out.groupby('player_id').cumcount() + 1
+        goalie_select['game_index'] = goalie_select.groupby('player_id').cumcount()
+
+        if goalie_select_out.shape[0] > 0:
             try:
                 ## Last game geolocation
                 goalie_select['last_city_lat'] = goalie_select.groupby('season')['city_lat'].shift(1).fillna(
@@ -1237,49 +1117,69 @@ def goalie_data(game_roster_data,
                                                pd.to_datetime(goalie_select.last_game_start_est, utc=True)). \
                     astype('timedelta64[h]').fillna(24 * 14)
 
-                goalie_windows = [min(goalie_game_totals[goalie] - 1, win) for win in windows]
+                goalie_select['hours_rest'] = goalie_select['hours_rest'].apply(lambda x:(24*14) if x > (24*14) else x)
 
-                for window in range(len(goalie_windows)):
-                    for hour_offset in hour_offsets:
-                        # For features known before game time
-                        for i in control_feats:
-                            output = roll(goalie_select, goalie_windows[window] + 1) \
-                                .apply(lambda x: weighted_mean_offset(x[i], x.hours_rest, goalie_windows[window],
-                                                                      hour_offset, 0)) \
-                                .rename("wa_" + str(i) + "_w" + str(windows[window]) + "_o" + str(hour_offset))
-                            goalie_select_out = goalie_select_out.join(output)
-
-                        # For features as the result of the game
-                        for i in result_feats:
-                            output = roll(goalie_select, goalie_windows[window] + 1) \
-                                .apply(lambda x: weighted_mean_offset(x[i], x.hours_rest, goalie_windows[window],
-                                                                      hour_offset, 1)) \
-                                .rename("wa_" + str(i) + "_w" + str(windows[window]) + "_o" + str(hour_offset))
-
-                            goalie_select_out = goalie_select_out.join(output)
-
-                goalie_select_out['travel_km'] = goalie_select['travel_km']
-                goalie_select_out['hours_rest'] = goalie_select['hours_rest']
-                goalie_select_out['days_rest'] = np.round(goalie_select_out['hours_rest'] / 24)
             except:
                 continue
+
+            goalie_select_out['travel_km'] = goalie_select['travel_km'].fillna(1277)
+            goalie_select_out['hours_rest'] = goalie_select['hours_rest'].fillna(24 * 14)
+            goalie_select_out['days_rest'] = np.round(goalie_select_out['hours_rest'] / 24)
+
+            # If too few games append replacement level data on
+            if goalie_select_out.shape[0] < 50:
+
+                ## Append replacement data to start
+                goalie_select = replacement_goalie_data(result_windows) \
+                    .append(goalie_select, ignore_index=True)
+
+                goalie_select_out = replacement_goalie_data(result_windows)[
+                    ['hours_rest', 'player_id', 'travel_km']] \
+                    .append(goalie_select_out, ignore_index=True)
+
+            goalie_select = goalie_select.fillna(0)
+
+            for window in range(len(control_windows)):
+                for hour_offset in control_offsets:
+                    # For features known before game time
+                    for i in control_feats:
+                        output = roll(goalie_select, control_windows[window] + 1) \
+                            .apply(
+                            lambda x: weighted_mean_offset(x[i], x.hours_rest, control_windows[window],
+                                                           hour_offset, 0)) \
+                            .rename("wa_" + str(i) + "_w" + str(control_windows[window]) + "_o" + str(hour_offset))
+
+                        goalie_select_out = goalie_select_out.join(output)
+
+            for window in range(len(result_windows)):
+                for hour_offset in result_offsets:
+                    # For features as the result of the game
+                    for i in result_feats:
+                        output = roll(goalie_select, result_windows[window] + 1) \
+                            .apply(lambda x: weighted_mean_offset(x[i], x.hours_rest, result_windows[window],
+                                                                  hour_offset, 1)) \
+                            .rename("wa_" + str(i) + "_w" + str(result_windows[window]) + "_o" + str(hour_offset))
+
+                        goalie_select_out = goalie_select_out.join(output)
+
+        goalie_select_out = goalie_select_out.loc[goalie_select_out.player_id.astype(int) > 2, :]
 
         # Append
         goalie_df = goalie_df.append(goalie_select_out)
 
     ## Subset to new goalie data
-    goalie_df = goalie_df.loc[goalie_df['id'] > last_id, :]
-
-    print(goalie_df.tail())
+    goalie_df = goalie_df.loc[goalie_df.id.astype(int) > last_id, :]
 
     goalie_rolling_df = goalie_rolling_df.append(goalie_df)
 
-    weights = ['_w12_o48', '_w12_o24', '_w6_o24', '_w6_o48']
+    weights = ['_w10_o48', '_w20_o48', '_w40_o48', '_w10_o168', '_w20_o168', '_w40_o168']
 
     for weight in weights:
-        goalie_rolling_df['wa_PP_svPct' + str(weight)] = goalie_rolling_df['wa_powerPlaySaves' + str(weight)] / goalie_rolling_df['wa_powerPlayShotsAgainst' + str(weight)]
-        goalie_rolling_df['wa_EV_svPct' + str(weight)] = goalie_rolling_df['wa_evenSaves' + str(weight)] / goalie_rolling_df['wa_evenShotsAgainst' + str(weight)]
-        goalie_rolling_df['wa_svPct' + str(weight)] = goalie_rolling_df['wa_saves' + str(weight)] / goalie_rolling_df['wa_shots' + str(weight)]
-
+        goalie_rolling_df['wa_PP_svPct' + str(weight)] = goalie_rolling_df['wa_powerPlaySaves' + str(weight)] / \
+                                                         goalie_rolling_df['wa_powerPlayShotsAgainst' + str(weight)]
+        goalie_rolling_df['wa_EV_svPct' + str(weight)] = goalie_rolling_df['wa_evenSaves' + str(weight)] / \
+                                                         goalie_rolling_df['wa_evenShotsAgainst' + str(weight)]
+        goalie_rolling_df['wa_svPct' + str(weight)] = goalie_rolling_df['wa_saves' + str(weight)] / goalie_rolling_df[
+            'wa_shots' + str(weight)]
 
     return (goalie_rolling_df)

@@ -350,7 +350,7 @@ def scrape_seasons(seasons, if_scrape_shifts):
     print_errors()
 
 
-def scrape_games(last_game, if_games_list, szn, if_scrape_shifts, model_df, scoreonly_df):
+def scrape_games(last_game, if_games_list, szn, if_scrape_shifts, process = True, model = False):
     """
     Scrape a given game
     :param games: list of game_ids
@@ -359,20 +359,32 @@ def scrape_games(last_game, if_games_list, szn, if_scrape_shifts, model_df, scor
     """
     import numpy as np
 
-    dtypes = {'xC': np.float64,
-             'yC': np.float64,
-             # 'X': np.float64,
-             # 'X_unadj': np.float64,
-             # 'Y': np.float64,
-             # 'Y_unadj': np.float64,
-             'Game_Id': int}
+    pbp_types = {'Game_Id': int,
+                 'Date': object,
+                 'Period': int,
+                 'Event': object,
+                 'Description': object,
+                 'Time_Elapsed': object,
+                 'Seconds_Elapsed': int,
+                 'Strength': object,
+                 'Ev_Zone': object,
+                 'Type': object,
+                 'Ev_Team': object,
+                 'Home_Zone': object,
+                 'Away_Team': object,
+                 'Home_Team': object,
+                 'xC': np.float64,
+                 'yC': np.float64,
+                 'Home_Coach': object,
+                 'Away_Coach': object
+                 }
 
     last_season = str(szn - 1) + str(szn)
     this_season = str(szn) + str(szn + 1)
 
     ## Read last 2 seasons of data
-    pbp_df_t_1 = pipeline_functions.encode_data(pipeline_functions.read_boto_s3('shots-all', 'nhl_pbp' + str(last_season) + '.csv'), types = dtypes)
-    pbp_df_t0 = pipeline_functions.encode_data(pipeline_functions.read_boto_s3('shots-all', 'nhl_pbp' + str(this_season) + '.csv'), types = dtypes)
+    pbp_df_t_1 = pipeline_functions.encode_data(pipeline_functions.read_boto_s3('shots-all', 'nhl_pbp' + str(last_season) + '.csv'), types = pbp_types)
+    pbp_df_t0 = pipeline_functions.encode_data(pipeline_functions.read_boto_s3('shots-all', 'nhl_pbp' + str(this_season) + '.csv'), types = pbp_types)
 
     ## Append last 2 seasons
     pbp_df_all = pbp_df_t_1.append(pbp_df_t0)
@@ -404,14 +416,16 @@ def scrape_games(last_game, if_games_list, szn, if_scrape_shifts, model_df, scor
     print(type(games_list))
 
     pbp_df, shifts_df = scrape_list_of_games(games_list, if_scrape_shifts)
-    pbp_df = pipeline_functions.encode_data(pbp_df)
+    pbp_df = pipeline_functions.encode_data(pbp_df, types = pbp_types)
     shifts_df = pipeline_functions.encode_data(pbp_df)
 
     # Save/Load/Append/Save PBP
     pbp_df = pipeline_functions.encode_data(pbp_df)
+    print("Total game count: " + str(pbp_df.loc[:,['Game_Id']].drop_duplicates().count()))
 
-    pbp_df_all = pbp_df_all.append(pbp_df)
-    pipeline_functions.write_boto_s3(pbp_df_all, 'shots-all', 'nhl_pbp' + str(this_season) + '.csv')
+    pbp_df_updated = pbp_df_t0.append(pbp_df)
+    pbp_df_updated['Date'] = pd.to_datetime(pbp_df_updated['Date']).dt.date
+    pipeline_functions.write_boto_s3(pbp_df_updated, 'shots-all', 'nhl_pbp' + str(this_season) + '.csv')
 
     # Save/Load/Append/Save Shifts
     #shifts_df.to_csv('nhl_shifts.csv', index=False)
@@ -419,7 +433,7 @@ def scrape_games(last_game, if_games_list, szn, if_scrape_shifts, model_df, scor
     shifts_df_all = shifts_df_all.append(shifts_df)
     pipeline_functions.write_boto_s3(shifts_df_all, 'shots-all', 'nhl_shifts' + str(this_season) + '.csv')
 
-    if model_df is True or scoreonly_df is True:
+    if process == True:
         print('Data Prep')
 
         pbp_df = pbp_df_all.append(pbp_df)
@@ -439,21 +453,12 @@ def scrape_games(last_game, if_games_list, szn, if_scrape_shifts, model_df, scor
         '2015_2016' if x.season in ['20142015', '20152016'] else
         '2017_2019' if x.season in ['20162017', '20172018', '20182019'] else 0, axis=1)
 
-    if model_df is True:
-        print('Model & Score')
-
-        df_adjustments.All_Model_Scoring(model_df, pbp_df, '2017_2019')
-
-    if scoreonly_df is True:
+    if model == False:
         print('Score Only')
-
         df_adjustments.All_Model_ScoringOnly(model_df, pbp_df, '2017_2019')
-
-    # if pbp_df is not None:
-    # pbp_df.to_csv('nhl_pbp20172018.csv', index=False)
-    # pbp_df.to_csv('nhl_pbp_games-{}.csv'.format(str(datetime.datetime.now().time())), sep=',')
-    # if shifts_df is not None:
-    #    shifts_df.to_csv('nhl_shifts_games-{}.csv'.format(str(datetime.datetime.now().time())), sep=',')
+    else:
+        print('Model & Score')
+        df_adjustments.All_Model_Scoring(model_df, pbp_df, '2017_2019')
 
     print_errors()
 
