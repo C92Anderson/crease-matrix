@@ -24,6 +24,7 @@ def s3_model_object_load(bucket, location):
     with io.BytesIO() as data:
         s3.Bucket(bucket).download_fileobj(location, data)
         data.seek(0)  # move back to the beginning after writing
+        ## Load model
         m = pickle.load(data)
     return(m)
 
@@ -534,11 +535,8 @@ def feature_generation(data,
 def All_Model_Scoring(model_data, data, szn):
     print (szn)
 
-    from sklearn.cross_validation import KFold
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.grid_search import GridSearchCV
+    from sklearn.model_selection import KFold
     from sklearn.linear_model import LogisticRegressionCV
-    import pickle
 
     model_vars = ['EmptyNet_SA', 'is_Rebound', 'is_Rush', 'LN_Last_Event_Time',
                   'LastEV_Off_Faceoff', 'LastEV_Def_Faceoff', 'LastEV_Neu_Faceoff',
@@ -571,7 +569,7 @@ def All_Model_Scoring(model_data, data, szn):
     print (str(szn) + ' seasons dimensions: ' + str(szn_model_mat.shape))
     print (str(szn) + ' seasons shooting%: ' + str(sum(goal) / len(goal)))
 
-    fold = KFold(len(goal), n_folds=10, shuffle=True, random_state=777)
+    fold = KFold() #n_splits=10, shuffle=True, random_state=777)
 
     xG_model_CV = LogisticRegressionCV(
         Cs=list(np.power(10.0, np.arange(-10, 10)))
@@ -605,7 +603,7 @@ def All_Model_Scoring(model_data, data, szn):
     print (str(szn) + ' seasons dimensions: ' + str(szn_model_mat.shape))
     print (str(szn) + ' seasons rebound%: ' + str(sum(rebound) / len(rebound)))
 
-    fold = KFold(len(rebound), n_folds=10, shuffle=True, random_state=777)
+    fold = KFold() #n_splits=10, shuffle=True, random_state=777)
 
     szn_model_mat = pd.concat([szn_model_data.reset_index(drop=True),
                                pd.DataFrame(xG_raw, columns=['xG_raw']).reset_index(drop=True)], axis=1).loc[:,
@@ -652,11 +650,6 @@ def All_Model_Scoring(model_data, data, szn):
 def All_Model_ScoringOnly(model_data, data, szn):
     print (szn)
 
-    from sklearn.cross_validation import KFold
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.grid_search import GridSearchCV
-    from sklearn.linear_model import LogisticRegressionCV
-    import pickle
 
     model_vars = ['EmptyNet_SA', 'is_Rebound', 'is_Rush', 'LN_Last_Event_Time',
                   'LastEV_Off_Faceoff', 'LastEV_Def_Faceoff', 'LastEV_Neu_Faceoff',

@@ -423,14 +423,14 @@ def scrape_games(last_game, if_games_list, szn, if_scrape_shifts, process = True
     pbp_df = pipeline_functions.encode_data(pbp_df)
     print("Total game count: " + str(pbp_df.loc[:,['Game_Id']].drop_duplicates().count()))
 
-    pbp_df_updated = pbp_df_t0.append(pbp_df)
+    pbp_df_updated = pbp_df_t0.append(pbp_df).drop_duplicates()
     pbp_df_updated['Date'] = pd.to_datetime(pbp_df_updated['Date']).dt.date
     pipeline_functions.write_boto_s3(pbp_df_updated, 'shots-all', 'nhl_pbp' + str(this_season) + '.csv')
 
     # Save/Load/Append/Save Shifts
     #shifts_df.to_csv('nhl_shifts.csv', index=False)
     #shifts_df = pd.read_csv("nhl_shifts.csv", encoding='latin-1')
-    shifts_df_all = shifts_df_all.append(shifts_df)
+    shifts_df_all = shifts_df_all.append(shifts_df).drop_duplicates()
     pipeline_functions.write_boto_s3(shifts_df_all, 'shots-all', 'nhl_shifts' + str(this_season) + '.csv')
 
     if process == True:

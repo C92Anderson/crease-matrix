@@ -22,7 +22,7 @@ def yesterday_last_gameid():
     """
     Return last game ID from finished games
     """
-    out = json_schedule.get_schedule(date.today() - timedelta(1),date.today()- timedelta(1))
+    out = json_schedule.get_schedule(date.today() - timedelta(1),date.today() - timedelta(1))
     GameId_List = []
 
     for i in range(len(out['dates'][0]['games'])):
@@ -217,7 +217,7 @@ def weighted_mean_offset(x, w, window, offset_decay, var_offset):
     count_back = np.cumsum(w_arr[::-1])[::-1]
     count_back_decay = (offset_decay + np.max(count_back)) - count_back
     weight = count_back_decay / np.sum(count_back_decay)
-    return (weight*x_arr).sum()
+    return ((weight*x_arr).sum())
 
 
 def possible_starters(game_info_data, game_roster_data):
@@ -845,7 +845,15 @@ def goalie_game_features(game_info_data,
 
     return (home_goalie_metrics, away_goalie_metrics)
 
-def team_game_features_ytd(szn, game_info_data, team_day_elos, team_game_features, goalie_rolling_df, model_df, remove_list):
+def team_game_features_ytd(szn,
+                           game_info_data,
+                           team_day_elos,
+                           score_adjusted_game_data,
+                           team_shooting_info,
+                           team_game_features,
+                           goalie_rolling_df,
+                           model_df,
+                           remove_list):
     """
     :param szn:
     :param game_info_data_geocode:
@@ -855,14 +863,18 @@ def team_game_features_ytd(szn, game_info_data, team_day_elos, team_game_feature
     :return:
     """
     pd.options.mode.chained_assignment = None
-    roll_features = ['game_skater_sim','game_GF', 'game_GA', 'game_SF', 'game_SA', 'game_PPGF', 'game_PKGA', 'game_PPAtt', 'game_PKAtt']
-    windows = [10, 20, 40]
-    hour_offsets = [48, 168]
+    result_features = ['game_skater_sim','game_GF','game_GA','game_SF',
+                      'game_SA','game_PPGF','game_PKGA','game_PPAtt','game_PKAtt',
+                      'game_SF_adj','game_SA_adj','game_xGF_adj','game_xGA_adj',
+                      'game_SOGF_rate','game_SOGA_rate','game_FwdF_share','game_FwdA_share']
+    control_features=['hours_rest', 'travel_km']
+    result_windows = [10, 20, 40]
+    result_offsets = [48, 168]
+    control_windows = [10]
+    control_offsets = [48]
 
     ## Prior season metrics
     game_info_data = game_info_data.loc[round(game_info_data.season.astype(float) / 10000) >= (szn - 1), :]
-
-    game_info_complete = game_info_data#.loc[game_info_data.status == 'Final', :]
 
     ## Append to current metrics
     #team_game_features = team_game_features.loc[round(team_game_features.id / 1000000) < szn, :]
@@ -873,66 +885,117 @@ def team_game_features_ytd(szn, game_info_data, team_day_elos, team_game_feature
 
     ## Loop through each team
     for team in team_list:
+        print(team)
 
-        team_df = game_info_complete.loc[
-                  (game_info_complete['home_team'] == team) | (game_info_complete['away_team'] == team), :] \
-            .sort_values(['game_start_est'])\
-            .merge(team_day_elos.loc[:,['id','away_skater_sim','home_skater_sim']], on='id', how='left')
+        team_df = game_info_data.loc[(game_info_data['home_team'] == team) | (game_info_data['away_team'] == team), : ]\
+                .sort_values(['game_start_est'])\
+                .merge(team_day_elos.loc[:,['id','away_skater_sim','home_skater_sim']], on = 'id', how = 'left')\
+                .merge(score_adjusted_game_data.loc[:,['id','Duration_60','away_SF_adj','home_SF_adj','away_xGF_adj','home_xGF_adj']], on = 'id', how = 'left')\
+                .merge(team_shooting_info.loc[:,['id','home_SOG_rate','away_SOG_rate','away_F_shot_share','home_F_shot_share']], on = 'id', how = 'left')
 
         ## Last game geolocation
-        team_df['last_city_lat'] = team_df.groupby('season')['city_lat'].shift(1).fillna(method='bfill').fillna(method='ffill')
-        team_df['last_city_long'] = team_df.groupby('season')['city_long'].shift(1).fillna(method='bfill').fillna(method='ffill')
+        team_df['last_city_lat'] = team_df.groupby('season')['city_lat'].shift(1).fillna(method='bfill')
+        team_df['last_city_long'] = team_df.groupby('season')['city_long'].shift(1).fillna(method='bfill')
 
         ## Travel distance
         team_df['travel_km'] = team_df.apply(lambda x: vincenty((x.city_lat, x.city_long), \
-                                                                (x.last_city_lat, x.last_city_long)), axis=1) \
-                                   .astype(str).str[:-3].astype(float)
+                                                                (x.last_city_lat,  x.last_city_long)), axis = 1)\
+                                    .astype(str).str[:-3].astype(float)
 
         ## Last game date
         team_df['last_game_start_est'] = team_df['game_start_est'].shift(1)
         ## Hours from last game
-        team_df['hours_rest'] = (pd.to_datetime(team_df.game_start_est, utc=True) - \
-                                 pd.to_datetime(team_df.last_game_start_est, utc=True)). \
-            astype('timedelta64[h]').fillna(method='bfill')
-        team_df['hours_rest'] = team_df['hours_rest'].apply(lambda x: (24 * 7) if x > (24 * 7) else x)
-
+        team_df['hours_rest'] = (pd.to_timedelta(pd.to_datetime(team_df.game_start_est) - pd.to_datetime(team_df.last_game_start_est)) \
+                                    / np.timedelta64(1, 'h')).fillna(24*7)
         team_df['team'] = team
 
         ## Team specific results
-        team_df['game_GF'] = team_df.apply(lambda x: x.home_goals if x.home_team == team else x.away_goals, axis=1)
-        team_df['game_GA'] = team_df.apply(lambda x: x.home_goals if x.home_team != team else x.away_goals, axis=1)
+        team_df['game_GF'] = team_df.apply(lambda x: x.home_goals if x.home_team == team else x.away_goals, axis = 1)
+        team_df['game_GA'] = team_df.apply(lambda x: x.home_goals if x.home_team != team else x.away_goals, axis = 1)
 
-        team_df['game_SF'] = team_df.apply(lambda x: x.home_shots if x.home_team == team else x.away_shots, axis=1)
-        team_df['game_SA'] = team_df.apply(lambda x: x.home_shots if x.home_team != team else x.away_shots, axis=1)
+        team_df['game_SF'] = team_df.apply(lambda x: x.home_shots if x.home_team == team else x.away_shots, axis = 1)
+        team_df['game_SA'] = team_df.apply(lambda x: x.home_shots if x.home_team != team else x.away_shots, axis = 1)
 
-        team_df['game_PPGF'] = team_df.apply(
-            lambda x: x.home_powerPlayGoals if x.home_team == team else x.away_powerPlayGoals, axis=1)
-        team_df['game_PKGA'] = team_df.apply(
-            lambda x: x.home_powerPlayGoals if x.home_team != team else x.away_powerPlayGoals, axis=1)
+        team_df['game_PPGF'] = team_df.apply(lambda x: x.home_powerPlayGoals if x.home_team == team else x.away_powerPlayGoals, axis = 1)
+        team_df['game_PKGA'] = team_df.apply(lambda x: x.home_powerPlayGoals if x.home_team != team else x.away_powerPlayGoals, axis = 1)
 
-        team_df['game_PPAtt'] = team_df.apply(
-            lambda x: x.home_powerPlayOpportunities if x.home_team == team else x.away_powerPlayOpportunities, axis=1)
-        team_df['game_PKAtt'] = team_df.apply(
-            lambda x: x.home_powerPlayOpportunities if x.home_team != team else x.away_powerPlayOpportunities, axis=1)
+        team_df['game_PPAtt'] = team_df.apply(lambda x: x.home_powerPlayOpportunities if x.home_team == team else x.away_powerPlayOpportunities, axis = 1)
+        team_df['game_PKAtt'] = team_df.apply(lambda x: x.home_powerPlayOpportunities if x.home_team != team else x.away_powerPlayOpportunities, axis = 1)
 
-        team_df['game_skater_sim'] = team_df.apply(
-            lambda x: x.home_skater_sim if x.home_team == team else x.away_skater_sim, axis=1)
+        team_df['game_SF_adj'] = team_df.apply(lambda x: x.home_SF_adj if x.home_team == team else x.away_SF_adj, axis = 1)
+        team_df['game_SA_adj'] = team_df.apply(lambda x: x.home_SF_adj if x.home_team != team else x.away_SF_adj, axis = 1)
 
-        team_df = team_df.fillna(value=0)
+        team_df['game_xGF_adj'] = team_df.apply(lambda x: x.home_xGF_adj if x.home_team == team else x.away_xGF_adj, axis = 1)
+        team_df['game_xGA_adj'] = team_df.apply(lambda x: x.home_xGF_adj if x.home_team != team else x.away_xGF_adj, axis = 1)
 
-        ## Roll-up weighted sum of each metric
-        for i in roll_features:
-            for window in windows:
-                for hour_offset in hour_offsets:
-                    output = roll(team_df, window+1).apply(
-                        lambda x: weighted_mean_offset(x[i], x.hours_rest, window, hour_offset, 1)) \
+        team_df['game_SOGF_rate'] = team_df.apply(lambda x: x.home_SOG_rate if x.home_team == team else x.away_SOG_rate, axis = 1)
+        team_df['game_SOGA_rate'] = team_df.apply(lambda x: x.home_SOG_rate if x.home_team != team else x.away_SOG_rate, axis = 1)
+
+        team_df['game_FwdF_share'] = team_df.apply(lambda x: x.home_F_shot_share if x.home_team == team else x.away_F_shot_share, axis = 1)
+        team_df['game_FwdA_share'] = team_df.apply(lambda x: x.home_F_shot_share if x.home_team != team else x.away_F_shot_share, axis = 1)
+
+        team_df['game_skater_sim'] = team_df.apply(lambda x: x.home_skater_sim if x.home_team == team else x.away_skater_sim, axis = 1)
+
+        ## Normalize per 60 team metrics
+        count_features = ['game_GF','game_GA','game_SF',
+                          'game_SA','game_PPGF','game_PKGA','game_PPAtt','game_PKAtt',
+                          'game_SF_adj','game_SA_adj','game_xGF_adj','game_xGA_adj']
+
+        for feat in count_features:
+            team_df[feat] = team_df[feat] / (team_df['Duration_60'].fillna(3600)/3600)
+
+        ## Impute pre-2005 features for rolling
+        pbp_metrics = ['game_SF_adj','game_SA_adj','game_xGF_adj','game_xGA_adj']
+        team_df.fillna(team_df[pbp_metrics].mean(), inplace=True)
+        #team_df[result_features] = team_df[result_features].fillna(method='ffill')
+
+        # Future game flag
+        team_df['last_game_status'] = team_df['status'].shift().fillna(method = 'bfill')
+
+        # Control features
+        for window in control_windows:
+            for hour_offset in control_offsets:
+                # For features known before game time
+                for i in control_features:
+                    output = roll(team_df, window) \
+                        .apply(
+                        lambda x: weighted_mean_offset(x[i], x.hours_rest, window,
+                                                       hour_offset, 0)) \
                         .rename("wa_" + str(i) + "_w" + str(window) + "_o" + str(hour_offset))
 
                     team_df = team_df.join(output)
 
-        team_df = team_df.loc[:, ['id', 'home_team', 'away_team', 'team', 'travel_km', 'hours_rest'] \
-                                 + ['wa_' + str(feat) + "_w" + str(window) + "_o" + str(hour_offset) \
-                                    for feat in roll_features for window in windows for hour_offset in hour_offsets]]
+        # Results features
+        for window in result_windows:
+            for hour_offset in result_offsets:
+                # For features as the result of the game
+                for i in result_features:
+                    output = roll(team_df, window + 1) \
+                        .apply(lambda x: weighted_mean_offset(x[i], x.hours_rest, window,
+                                                              hour_offset, 1)) \
+                        .rename("wa_" + str(i) + "_w" + str(window) + "_o" + str(hour_offset))
+
+                    team_df = team_df.join(output)
+
+        # If last game isn't completed yet, need to drop down
+        team_df.loc[team_df['last_game_status'] != 'Final',
+                    ["wa_" + str(i) + "_w" + str(window) + "_o" + str(hour_offset)
+                     for window in result_windows
+                     for hour_offset in result_offsets
+                     for i in result_features]] = np.nan
+
+        # Limit to useful features
+        team_df = team_df \
+                      .sort_values('game_start_est') \
+                      .loc[:,['id','home_team','away_team','team','travel_km','hours_rest']\
+                              + ['wa_' + str(feat) + "_w" + str(window) + "_o" + str(hour_offset) \
+                                 for feat in control_features
+                                 for window in control_windows
+                                 for hour_offset in control_offsets] \
+                              + ['wa_' + str(feat) + "_w" + str(window) + "_o" + str(hour_offset) \
+                                 for feat in result_features
+                                 for window in result_windows
+                                 for hour_offset in result_offsets]]#.fillna(method='ffill')
 
         team_game_features_new = team_game_features_new.append(team_df)
 
@@ -1001,7 +1064,6 @@ def goalie_data(game_roster_data,
 
     control_windows = [10]
     control_offsets = [24, 48]
-
     result_windows = [10, 20, 40]
     result_offsets = [48, 168]
 
@@ -1115,7 +1177,7 @@ def goalie_data(game_roster_data,
                 ## Hours from last game
                 goalie_select['hours_rest'] = (pd.to_datetime(goalie_select.game_start_est, utc=True) - \
                                                pd.to_datetime(goalie_select.last_game_start_est, utc=True)). \
-                    astype('timedelta64[h]').fillna(24 * 14)
+                    astype('timedelta64[h]').fillna(24 * 14).astype(int)
 
                 goalie_select['hours_rest'] = goalie_select['hours_rest'].apply(lambda x:(24*14) if x > (24*14) else x)
 
@@ -1183,3 +1245,121 @@ def goalie_data(game_roster_data,
             'wa_shots' + str(weight)]
 
     return (goalie_rolling_df)
+
+
+## Create Function to Pull Roster and Game Data to Calculate % D/Miss Shots
+def team_shooting(game_info_data, game_roster_data):
+    """
+    """
+    team_shooting_info = read_boto_s3('games-all', 'team_shooting_info.csv')
+
+    last_id = max(team_shooting_info['id'])
+
+    game_info = game_info_data.loc[game_info_data['id'] > last_id, :]
+
+    ## Miss rate
+    game_info['home_SOG_rate'] = (
+                game_info['home_shots'] / (game_info[['home_attempts', 'away_blocked', 'home_shots']].sum(axis=1)))
+    game_info['away_SOG_rate'] = (
+                game_info['away_shots'] / (game_info[['away_attempts', 'home_blocked', 'away_shots']].sum(axis=1)))
+
+    ## Fwd Shot Share
+    game_roster = game_roster_data.loc[game_roster_data['id'] > last_id, :]
+
+    game_roster['fwd_shot'] = game_roster.apply(lambda x: x.shots if x.Pos != 'D' else 0, axis=1)
+
+    game_shots = game_roster.loc[game_roster['Pos'] != 'G', :] \
+        .groupby(['id', 'team'])['shots', 'fwd_shot'] \
+        .agg({'shots': 'sum', 'fwd_shot': 'sum'}).reset_index()
+
+    game_shots['fwd_shot_share'] = game_shots['fwd_shot'] / game_shots['shots']
+
+    game_shots['team'] = game_shots['team'].astype(str) + '_F_shot_share'
+
+    game_shots = game_shots \
+        .pivot(index='id', columns='team', values='fwd_shot_share').reset_index()
+
+    game_all = game_info.loc[:, ['id', 'home_SOG_rate', 'away_SOG_rate']] \
+        .merge(game_shots, on='id', how='inner')
+
+    team_shooting_info = team_shooting_info.append(game_all)
+
+    return (team_shooting_info)
+
+
+## Adjusted metrics game-level
+# Time game time leading
+def score_adjusted_game_pbp(scored_data):
+
+    score_venue_multipliers = read_boto_s3('shots-all', 'score_venue_multipliers.csv')
+
+    score_adjusted_game_data = read_boto_s3('games-all', 'score_adjusted_game_data.csv')
+
+    data = scored_data.loc[:,
+           ['season', 'Game_Id', 'Home_Score', 'Away_Score', 'xG_raw', 'is_Rebound', 'Event', 'Home_Shooter', 'Period',
+            'Seconds_Elapsed']]
+
+    data['id'] = ((round(data['season'] / 10000) * 1000000) + data['Game_Id']).astype(int)
+
+    last_id = max(score_adjusted_game_data['id'])
+
+    data = data.loc[data['id'] > last_id, :]
+
+
+    data['xG_lag'] = data.groupby('Home_Shooter')['xG_raw'].shift()
+
+    data['xG_team'] = data.apply(lambda x: x['xG_raw'] if x['is_Rebound'] == 0
+    else x['xG_raw'] * (1 - x['xG_lag'])
+                                 , axis=1)
+
+    data['home_score_state'] = data['Home_Score'] - data['Away_Score']
+    data = data.dropna()
+
+    data['home_score_state'] = data \
+        .apply(lambda x: 3 if x.home_score_state > 2
+    else -3 if x.home_score_state < -2
+    else int(x.home_score_state), axis=1)
+
+    data['home_score_state2'] = 'Duration' + data['home_score_state'].astype(str)
+
+    data['home_attempts'] = data['Home_Shooter']
+    data['away_attempts'] = 1 - data['Home_Shooter']
+
+    data['game_seconds'] = ((data['Period'] - 1) * (20 * 60)) + data['Seconds_Elapsed']
+
+    goals = data.loc[(data['Event'] == 'GOAL'), :]
+
+    buzzer = goals.groupby('id')['game_seconds'].max().reset_index()
+
+    buzzer['game_seconds'] = buzzer['game_seconds'].apply(lambda x: x if x > 3600 else 3600)
+
+    goals = goals.merge(buzzer, on=['id', 'game_seconds'], how='outer')
+
+    goals = goals.sort_values(['id', 'game_seconds']).fillna(method='ffill')
+
+    goals['duration_seconds'] = goals['game_seconds'] - goals.groupby(['id'])['game_seconds'].shift().fillna(0)
+
+    game_score_state = goals.groupby(['id', 'home_score_state2'])['duration_seconds'].sum().reset_index() \
+        .pivot(index='id', columns='home_score_state2')['duration_seconds'].reset_index().fillna(0)
+
+    data = data \
+        .merge(score_venue_multipliers, on='home_score_state', how='left')
+
+    data['home_SF_adj'] = data['home_attempts'] * data['home_coef']
+    data['away_SF_adj'] = data['away_attempts'] * data['away_coef']
+
+    data['home_xGF_adj'] = data['home_attempts'] * data['xG_team']  # * data['home_coef']
+    data['away_xGF_adj'] = data['away_attempts'] * data['xG_team']  # * data['away_coef']
+
+    game_fenwick_totals = data.groupby(['id','season'])[
+        ['home_SF_adj', 'away_SF_adj', 'home_xGF_adj', 'away_xGF_adj']].sum().reset_index()
+
+    game_fenwick_totals = game_fenwick_totals.merge(game_score_state, on='id', how='left')
+
+    score_adjusted_game_data = score_adjusted_game_data.append(game_fenwick_totals)
+
+    duration_metrics = ['Duration-1','Duration-2','Duration-3','Duration0','Duration1','Duration2','Duration3']
+    score_adjusted_game_data['Duration_60'] = score_adjusted_game_data[duration_metrics].sum(axis=1)
+
+    return (score_adjusted_game_data)
+
