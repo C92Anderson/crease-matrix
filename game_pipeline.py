@@ -2,31 +2,37 @@
 """
 This module contains functions that scrapes games and assembles a game-level modeling dataframe and scores it
 """
+import time
+print("Running game_pipeline.py")
+
+# Sleep for 4 hours
+#time.sleep(5*60*60)
+
+print("Waking up")# + str(datetime.now()))
+
 import scrape_functions
 import pipeline_functions
 import model_functions
 #import xG_update
-import numpy as np
 
-print("Running game_pipeline.py ")# + str(datetime.now()))
 
-## Read data from s3
+# ## Read data from s3
 arena_geocode = pipeline_functions.read_boto_s3('games-all','arena_geocode.csv')
 game_info_data = pipeline_functions.read_boto_s3('games-all','game_info_data.csv')
-# game_roster_data = pipeline_functions.read_boto_s3('games-all','game_roster_data.csv')
-# team_day_ratings_lag = pipeline_functions.read_boto_s3('games-all','team_day_ratings_lag.csv')
-# team_day_elos = pipeline_functions.read_boto_s3('games-all','team_day_elos.csv')
-# team_game_features = pipeline_functions.read_boto_s3('games-all','team_game_features.csv')
-# game_level_model_df = pipeline_functions.read_boto_s3('games-all','game_level_model_df.csv')
-# goalie_rolling_df = pipeline_functions.read_boto_s3('games-all','goalie_rolling_df.csv')
-# scored_data2017_2019 = pipeline_functions.read_boto_s3('shots-all', "scored_data2017_2019.csv")
+game_roster_data = pipeline_functions.read_boto_s3('games-all','game_roster_data.csv')
+team_day_ratings_lag = pipeline_functions.read_boto_s3('games-all','team_day_ratings_lag.csv')
+team_day_elos = pipeline_functions.read_boto_s3('games-all','team_day_elos.csv')
+team_game_features = pipeline_functions.read_boto_s3('games-all','team_game_features.csv')
+game_level_model_df = pipeline_functions.read_boto_s3('games-all','game_level_model_df.csv')
+goalie_rolling_df = pipeline_functions.read_boto_s3('games-all','goalie_rolling_df.csv')
+goalie_xG_rolling_df = pipeline_functions.read_boto_s3('games-all','goalie_xG_rolling_df.csv')
+scored_data2017_2019 = pipeline_functions.read_boto_s3('shots-all', "scored_data2017_2019.csv")
 
 start_game_id = max(game_info_data['id'])
-end_game_id = pipeline_functions.today_last_gameid()
+end_game_id = pipeline_functions.tomorrow_last_gameid()
 year = 2018
 
-goalie_IR = ['Ryan Miller','Antti Raanta','Corey Crawford','Craig Anderson','Cory Schneider','Brian Elliott','Anthony Stolarz']
-
+goalie_IR = ['Antti Raanta']
 
 print(start_game_id)
 
@@ -47,49 +53,61 @@ if int(str(year) + "0" + str(end_game_id)) > start_game_id:
     #
     # print(game_info_data2.shape)
     #
-    # ## Goalie data
-    # goalie_rolling_df2 = pipeline_functions.goalie_data(game_roster_data2,
-    #                                  game_info_data2,
-    #                                  2015,
-    #                                  goalie_rolling_df)
-    #
-    # ## Shooter data
-    # team_shooting_info2 = pipeline_functions.team_shooting(game_info_data2, game_roster_data2)
-    # pipeline_functions.write_boto_s3(team_shooting_info2, 'games-all', 'team_shooting_info2.csv')
-    #
-    # ## Team Adjusted data
-    # score_adjusted_game_data2 = pipeline_functions.score_adjusted_game_pbp(scored_data2017_2019)
-    # pipeline_functions.write_boto_s3(score_adjusted_game_data2, 'games-all', 'score_adjusted_game_data2.csv')
-    #
-    # pipeline_functions.write_boto_s3(pipeline_functions.possible_starters(game_info_data2, game_roster_data2), 'games-all', 'possible-starters.csv')
-    #
     # pipeline_functions.write_boto_s3(game_info_data2, 'games-all', 'game_info_data2.csv')
     # pipeline_functions.write_boto_s3(game_roster_data2, 'games-all', 'game_roster_data2.csv')
     # pipeline_functions.write_boto_s3(team_day_ratings_lag2, 'games-all', 'team_day_ratings_lag2.csv')
-    # pipeline_functions.write_boto_s3(goalie_rolling_df2, 'games-all', 'goalie_rolling_df2.csv')
     # pipeline_functions.write_boto_s3(team_day_elos2, 'games-all', 'team_day_elos2.csv')
     #
-    # game_info_data2 = pipeline_functions.read_boto_s3('games-all', 'game_info_data2.csv')
-    # game_roster_data2 = pipeline_functions.read_boto_s3('games-all', 'game_roster_data2.csv')
-    # team_day_ratings_lag2 = pipeline_functions.read_boto_s3('games-all', 'team_day_ratings_lag2.csv')
-    # goalie_rolling_df2 = pipeline_functions.read_boto_s3('games-all', 'goalie_rolling_df2.csv')
-    # team_day_elos2 = pipeline_functions.read_boto_s3('games-all', 'team_day_elos2.csv')
-    # score_adjusted_game_data2 = pipeline_functions.read_boto_s3('games-all', 'score_adjusted_game_data2.csv')
-    # team_shooting_info2 = pipeline_functions.read_boto_s3('games-all', 'team_shooting_info2.csv')
-    # game_level_model_df = pipeline_functions.read_boto_s3('games-all', 'game_level_model_df.csv')
+    # # #
+    # ### Goalie data (DISCONTINUED)
+    # #goalie_rolling_df2 = pipeline_functions.goalie_data(game_roster_data2,
+    # #                                 game_info_data2,
+    # #                                 2015,
+    # #                                 goalie_rolling_df)
+    # # pipeline_functions.write_boto_s3(goalie_rolling_df2, 'games-all', 'goalie_rolling_df2.csv')
     #
-    # model_df2, team_game_features2 = pipeline_functions.team_game_features_ytd(year,
-    #                                                 game_info_data2,
-    #                                                 team_day_elos2,
-    #                                                 score_adjusted_game_data2,
-    #                                                 team_shooting_info2,
-    #                                                 team_game_features,
-    #                                                 goalie_rolling_df2,
-    #                                                 game_level_model_df,
-    #                                                 goalie_IR)
-    #
-    # pipeline_functions.write_boto_s3(model_df2, 'games-all', 'game_level_model_df2.csv')
-    # pipeline_functions.write_boto_s3(team_game_features2, 'games-all', 'team_game_features2.csv')
+
+    game_info_data2 = pipeline_functions.read_boto_s3('games-all', 'game_info_data2.csv')
+    game_roster_data2 = pipeline_functions.read_boto_s3('games-all', 'game_roster_data2.csv')
+    team_day_elos2 = pipeline_functions.read_boto_s3('games-all', 'team_day_elos2.csv')
+    team_day_ratings_lag2 = pipeline_functions.read_boto_s3('games-all', 'team_day_ratings_lag2.csv')
+    game_level_model_df = pipeline_functions.read_boto_s3('games-all', 'game_level_model_df.csv')
+
+    ## Update goalie game data
+    goalie_game_data2 = pipeline_functions.goalie_game_update(start_game_id, scored_data2017_2019)
+    pipeline_functions.write_boto_s3(goalie_game_data2, 'games-all', 'goalie_game_data2.csv')
+
+    ## Goalie data
+    goalie_xG_rolling_df2 = pipeline_functions.goalie_xG_data(goalie_game_data2,
+                   game_info_data2,
+                   year,
+                   goalie_xG_rolling_df)
+
+    pipeline_functions.write_boto_s3(goalie_xG_rolling_df2, 'games-all', 'goalie_xG_rolling_df2.csv')
+    goalie_xG_rolling_df2 = pipeline_functions.read_boto_s3('games-all', 'goalie_xG_rolling_df2.csv')
+
+    ## Shooter data
+    team_shooting_info2 = pipeline_functions.team_shooting(game_info_data2, game_roster_data2)
+    pipeline_functions.write_boto_s3(team_shooting_info2, 'games-all', 'team_shooting_info2.csv')
+
+    ## Team Adjusted data
+    score_adjusted_game_data2 = pipeline_functions.score_adjusted_game_pbp(scored_data2017_2019)
+    pipeline_functions.write_boto_s3(score_adjusted_game_data2, 'games-all', 'score_adjusted_game_data2.csv')
+
+    pipeline_functions.write_boto_s3(pipeline_functions.possible_starters(game_info_data2, game_roster_data2), 'games-all', 'possible-starters.csv')
+
+    model_df2, team_game_features2 = pipeline_functions.team_game_features_ytd(year,
+                                                    game_info_data2,
+                                                    team_day_elos2,
+                                                    score_adjusted_game_data2,
+                                                    team_shooting_info2,
+                                                    team_game_features,
+                                                    goalie_xG_rolling_df2,
+                                                    game_level_model_df,
+                                                    goalie_IR)
+
+    pipeline_functions.write_boto_s3(model_df2, 'games-all', 'game_level_model_df2.csv')
+    pipeline_functions.write_boto_s3(team_game_features2, 'games-all', 'team_game_features2.csv')
 
     model_df2 = pipeline_functions.read_boto_s3('games-all', 'game_level_model_df2.csv')
 

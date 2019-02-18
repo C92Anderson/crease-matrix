@@ -1,7 +1,5 @@
 import schedule
 import time
-import game_pipeline
-import xG_update
 
 def job():
     print("Updating...")

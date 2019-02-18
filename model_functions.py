@@ -436,22 +436,26 @@ def score_game_data(model_df,
                     control_offsets=[48],
                     result_windows=[20, 40],
                     result_offsets=[48, 168],
-                    starter_control_standard=['starter_hours_rest', 'starter_travel_km'],
-                    starter_control_weighted=['starter_wa_hours_rest', 'starter_wa_travel_km'],
+                    starter_control_standard=['starter_hours_rest'],
+                    starter_control_weighted=['starter_wa_hours_rest'],
                     elo_metrics=['elo_k4', 'elo_k4_wm4', 'elo_k4_wm4_SO2', 'elo_k4_wm2_SO2', 'elo_k8_wm8_SO2'],
                     model_list=['lr_cvsearch', 'gnb_isotonic', 'rf_isotonic', 'mlp_isotonic', 'lr_model', 'xgb_model'],
                     custom_model_list=['gnb_isotonic_custom', 'lr_cvsearch_custom', 'mlp_isotonic_custom',
                                        # 'rf_isotonic_custom',
                                        'lr_model_custom', 'svm_model_custom', 'xgb_model_custom'],
-                    control_features=['wa_travel_km', 'wa_hours_rest'],
-                    result_features=['wa_game_GF', 'wa_game_GA',  # 'wa_game_SF', 'wa_game_SA',
+                    control_features=['wa_hours_rest'],
+                    result_features=['wa_game_GF', 'wa_game_GA',
+                                     'wa_game_skater_sim',
+                                     'starter_wa_GPAA100',
                                      'wa_game_xGF_adj', 'wa_game_xGA_adj',
-                                     'wa_game_SOGF_rate', 'wa_game_SOGA_rate', 'wa_game_FwdF_share',
-                                     'wa_game_FwdA_share',
-                                     'wa_game_PPGF', 'wa_game_PKGA', 'wa_game_PPAtt', 'wa_game_PKAtt',
-                                     'wa_game_skater_sim', 'starter_wa_PP_svPct', 'starter_wa_svPct'],
-                    standard_features=['hours_rest', 'travel_km']):
-    scaler = s3_model_object_load('games-all', 'Models/game_features_scaler')
+                                     # wa_game_SF','wa_game_SA',
+                                     'wa_game_PPEff', 'wa_game_PKEff',
+                                     'wa_game_PPAtt', 'wa_game_PKAtt',
+                                     'wa_game_SOGF_rate', 'wa_game_SOGA_rate',
+                                     'wa_game_FwdF_share', 'wa_game_FwdA_share'],
+                    standard_features=['hours_rest', 'ln_km_perday', 'travel_index']):
+
+    scaler = s3_model_object_load('games-all', 'Models_v2/game_features_scaler')
 
     complete_feature_set = [str(feature) + "_w" + str(window) + "_o" + str(offset)
                             for feature in result_features
@@ -492,7 +496,7 @@ def score_game_data(model_df,
                             print(
                                 str(model) + "_" + str(metric) + '_w' + str(result_window) + '_o' + str(result_offset))
                             loaded_model = s3_model_object_load('games-all',
-                                                                'Models/' + str(model) + "_" + str(metric) + '_w' + str(
+                                                                'Models_v2/' + str(model) + "_" + str(metric) + '_w' + str(
                                                                     result_window) + '_o' + str(result_offset))
 
                             feature_set = [str(feature) + "_w" + str(result_window) + "_o" + str(result_offset)
@@ -516,9 +520,9 @@ def score_game_data(model_df,
                                 str(model) + "_" + str(metric) + '_w' + str(result_window) + '_o' + str(result_offset)]
                             all_game_probs = pd.concat([all_game_probs.reset_index(drop=True), pred], axis=1)
 
-    game_features_custom = s3_model_object_load('games-all', 'Models/game_features_custom')
+    game_features_custom = s3_model_object_load('games-all', 'Models_v2/game_features_custom')
 
-    scaler = s3_model_object_load('games-all', 'Models/game_features_scaler_custom')
+    scaler = s3_model_object_load('games-all', 'Models_v2/game_features_scaler_custom')
 
     ## Scale full dataframe
     full_custom_df = model_df.loc[:, game_features_custom]
@@ -531,7 +535,7 @@ def score_game_data(model_df,
     for model in custom_model_list:
         print(model)
         # Load models
-        loaded_model = s3_model_object_load('games-all', 'Models/' + str(model))
+        loaded_model = s3_model_object_load('games-all', 'Models_v2/' + str(model))
 
         # Try
         if model != 'xgb_model_custom':
@@ -594,7 +598,7 @@ def ensemble_models(all_game_probs,
     # Save scaler
     s3_resource = boto3.resource('s3')
     pickle_byte_obj = pickle.dumps(scaler)
-    s3_resource.Object('games-all', 'Models/Ensemble/game_probabilities_scaler').put(Body=pickle_byte_obj)
+    s3_resource.Object('games-all', 'Models_v2/Ensemble_v2/game_probabilities_scaler').put(Body=pickle_byte_obj)
 
     ## Scale full dataframe
     full_df = all_game_probs.loc[:, feature_set]
@@ -606,7 +610,7 @@ def ensemble_models(all_game_probs,
                                                        n_jobs=-1)
     lr_cvsearch.fit(train_X, train_Y)
 
-    lr_cvsearch_out = model_complete_scoring(lr_cvsearch, 'games-all', 'Models/Ensemble/lr_model_cvsearch', test_X,
+    lr_cvsearch_out = model_complete_scoring(lr_cvsearch, 'games-all', 'Models_v2/Ensemble_v2/lr_model_cvsearch', test_X,
                                              test_Y, "proba")
 
     print("LR Grid Search Results: " + str(lr_cvsearch_out[:4]))
@@ -619,7 +623,7 @@ def ensemble_models(all_game_probs,
 
     lr_randomsearch.fit(train_X, train_Y, groups=train_Szn)
 
-    lr_randomsearch_out = model_complete_scoring(lr_randomsearch, 'games-all', 'Models/Ensemble/lr_model_randomsearch',
+    lr_randomsearch_out = model_complete_scoring(lr_randomsearch, 'games-all', 'Models_v2/Ensemble_v2/lr_model_randomsearch',
                                                  test_X, test_Y, "proba")
 
     print("LR Random Search Results: " + str(lr_randomsearch_out[:4]))
@@ -635,7 +639,7 @@ def ensemble_models(all_game_probs,
 
     lr_regularized.fit(train_X, train_Y)
 
-    lr_regularized_out = model_complete_scoring(lr_regularized, 'games-all', 'Models/Ensemble/lr_model_regularized',
+    lr_regularized_out = model_complete_scoring(lr_regularized, 'games-all', 'Models_v2/Ensemble_v2/lr_model_regularized',
                                                 test_X, test_Y, "proba")
 
     print("LR Regularized Results: " + str(lr_regularized_out[:4]))
@@ -656,7 +660,7 @@ def ensemble_models(all_game_probs,
 
     for model in ensemble_list:
         # Load models
-        loaded_model = s3_model_object_load('games-all', 'Models/Ensemble/' + str(model))
+        loaded_model = s3_model_object_load('games-all', 'Models_v2/Ensemble_v2/' + str(model))
 
         pred = pd.DataFrame(loaded_model.predict_proba(full_df)).iloc[:, 1]
 
