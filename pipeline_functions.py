@@ -55,7 +55,7 @@ def read_boto_s3(bucket, file):
     """
     s3 = boto3.client('s3')
     obj = s3.get_object(Bucket=bucket, Key=file)
-    df = pd.read_csv(io.BytesIO(obj['Body'].read()))
+    df = pd.read_csv(io.BytesIO(obj['Body'].read()), low_memory=False)
     return(df)
 
 ## Define elo functions

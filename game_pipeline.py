@@ -6,14 +6,14 @@ import time
 print("Running game_pipeline.py")
 
 # Sleep for 4 hours
-#time.sleep(5*60*60)
+time.sleep(6*60*60)
 
 print("Waking up")# + str(datetime.now()))
 
 import scrape_functions
 import pipeline_functions
 import model_functions
-#import xG_update
+import xG_update
 
 
 # ## Read data from s3
@@ -40,23 +40,23 @@ print("Scrape from " + str(start_game_id+1) + " to " + str(year) + "0" + str(end
 
 if int(str(year) + "0" + str(end_game_id)) > start_game_id:
 
-    # print("Processing " + str(int(str(year) + "0" + str(end_game_id)) - start_game_id) + " games")
-    # print("Game-level dataset: " + str(game_info_data.shape))
-    #
-    # game_info_data2, game_roster_data2, team_day_elos2, team_day_ratings_lag2 = pipeline_functions.process_games_ytd(year,
-    #                                                  end_game_id,
-    #                                                  game_info_data,
-    #                                                  game_roster_data,
-    #                                                  team_day_ratings_lag,
-    #                                                  team_day_elos,
-    #                                                  arena_geocode)
-    #
-    # print(game_info_data2.shape)
-    #
-    # pipeline_functions.write_boto_s3(game_info_data2, 'games-all', 'game_info_data2.csv')
-    # pipeline_functions.write_boto_s3(game_roster_data2, 'games-all', 'game_roster_data2.csv')
-    # pipeline_functions.write_boto_s3(team_day_ratings_lag2, 'games-all', 'team_day_ratings_lag2.csv')
-    # pipeline_functions.write_boto_s3(team_day_elos2, 'games-all', 'team_day_elos2.csv')
+    print("Processing " + str(int(str(year) + "0" + str(end_game_id)) - start_game_id) + " games")
+    print("Game-level dataset: " + str(game_info_data.shape))
+
+    game_info_data2, game_roster_data2, team_day_elos2, team_day_ratings_lag2 = pipeline_functions.process_games_ytd(year,
+                                                     end_game_id,
+                                                     game_info_data,
+                                                     game_roster_data,
+                                                     team_day_ratings_lag,
+                                                     team_day_elos,
+                                                     arena_geocode)
+
+    print(game_info_data2.shape)
+
+    pipeline_functions.write_boto_s3(game_info_data2, 'games-all', 'game_info_data2.csv')
+    pipeline_functions.write_boto_s3(game_roster_data2, 'games-all', 'game_roster_data2.csv')
+    pipeline_functions.write_boto_s3(team_day_ratings_lag2, 'games-all', 'team_day_ratings_lag2.csv')
+    pipeline_functions.write_boto_s3(team_day_elos2, 'games-all', 'team_day_elos2.csv')
     #
     # # #
     # ### Goalie data (DISCONTINUED)
