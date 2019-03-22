@@ -6,7 +6,7 @@ import time
 print("Running game_pipeline.py")
 
 # Sleep for 4 hours
-time.sleep(6*60*60)
+time.sleep(7*60*60)
 
 print("Waking up")# + str(datetime.now()))
 
@@ -32,7 +32,7 @@ start_game_id = max(game_info_data['id'])
 end_game_id = pipeline_functions.tomorrow_last_gameid()
 year = 2018
 
-goalie_IR = ['Antti Raanta']
+goalie_IR = []
 
 print(start_game_id)
 
@@ -57,15 +57,15 @@ if int(str(year) + "0" + str(end_game_id)) > start_game_id:
     pipeline_functions.write_boto_s3(game_roster_data2, 'games-all', 'game_roster_data2.csv')
     pipeline_functions.write_boto_s3(team_day_ratings_lag2, 'games-all', 'team_day_ratings_lag2.csv')
     pipeline_functions.write_boto_s3(team_day_elos2, 'games-all', 'team_day_elos2.csv')
-    #
-    # # #
-    # ### Goalie data (DISCONTINUED)
-    # #goalie_rolling_df2 = pipeline_functions.goalie_data(game_roster_data2,
-    # #                                 game_info_data2,
-    # #                                 2015,
-    # #                                 goalie_rolling_df)
-    # # pipeline_functions.write_boto_s3(goalie_rolling_df2, 'games-all', 'goalie_rolling_df2.csv')
-    #
+
+
+    ## Goalie shot-level data
+    goalie_rolling_df2 = pipeline_functions.goalie_data(game_roster_data2,
+                                    game_info_data2,
+                                    2015,
+                                    goalie_rolling_df)
+    pipeline_functions.write_boto_s3(goalie_rolling_df2, 'games-all', 'goalie_rolling_df2.csv')
+
 
     game_info_data2 = pipeline_functions.read_boto_s3('games-all', 'game_info_data2.csv')
     game_roster_data2 = pipeline_functions.read_boto_s3('games-all', 'game_roster_data2.csv')

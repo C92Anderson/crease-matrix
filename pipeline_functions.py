@@ -1487,21 +1487,19 @@ def team_shooting(game_info_data, game_roster_data):
 ## Adjusted metrics game-level
 # Time game time leading
 def score_adjusted_game_pbp(scored_data):
-
     score_venue_multipliers = read_boto_s3('shots-all', 'score_venue_multipliers.csv')
 
     score_adjusted_game_data = read_boto_s3('games-all', 'score_adjusted_game_data.csv')
+    last_id = max(score_adjusted_game_data['id'])
 
     data = scored_data.loc[:,
-           ['season', 'Game_Id', 'Home_Score', 'Away_Score', 'xG_raw', 'is_Rebound', 'Event', 'Home_Shooter', 'Period',
-            'Seconds_Elapsed']]
+           ['season', 'Game_Id', 'Home_Score', 'Away_Score', 'xG_raw', 'is_Rebound', 'is_Rush', 'Event', 'Home_Shooter',
+            'Period',
+            'Seconds_Elapsed', 'Home_Players', 'Away_Players']]
 
     data['id'] = ((round(data['season'] / 10000) * 1000000) + data['Game_Id']).astype(int)
 
-    last_id = max(score_adjusted_game_data['id'])
-
     data = data.loc[data['id'] > last_id, :]
-
 
     data['xG_lag'] = data.groupby('Home_Shooter')['xG_raw'].shift()
 
@@ -1522,6 +1520,10 @@ def score_adjusted_game_pbp(scored_data):
     data['home_attempts'] = data['Home_Shooter']
     data['away_attempts'] = 1 - data['Home_Shooter']
 
+    data['even_strength'] = data.apply(lambda x: 1 if (x.Home_Players - x.Away_Players) == 0 else 0, axis=1)
+    data['home_advantage'] = data.apply(lambda x: 1 if (x.Home_Players - x.Away_Players) > 0 else 0, axis=1)
+    data['away_advantage'] = data.apply(lambda x: 1 if (x.Home_Players - x.Away_Players) < 0 else 0, axis=1)
+
     data['game_seconds'] = ((data['Period'] - 1) * (20 * 60)) + data['Seconds_Elapsed']
 
     goals = data.loc[(data['Event'] == 'GOAL'), :]
@@ -1538,6 +1540,7 @@ def score_adjusted_game_pbp(scored_data):
 
     game_score_state = goals.groupby(['id', 'home_score_state2'])['duration_seconds'].sum().reset_index() \
         .pivot(index='id', columns='home_score_state2')['duration_seconds'].reset_index().fillna(0)
+    print(game_score_state.columns)
 
     data = data \
         .merge(score_venue_multipliers, on='home_score_state', how='left')
@@ -1545,22 +1548,43 @@ def score_adjusted_game_pbp(scored_data):
     data['home_SF_adj'] = data['home_attempts'] * data['home_coef']
     data['away_SF_adj'] = data['away_attempts'] * data['away_coef']
 
-    data['home_xGF_adj'] = data['home_attempts'] * data['xG_team']  * data['home_xG_coef']
-    data['away_xGF_adj'] = data['away_attempts'] * data['xG_team']  * data['away_xG_coef']
+    data['home_xGF_adj'] = data['home_attempts'] * data['xG_team'] * data['home_xG_coef']
+    data['away_xGF_adj'] = data['away_attempts'] * data['xG_team'] * data['away_xG_coef']
 
-    game_fenwick_totals = data.groupby(['id','season'])[
-        ['home_SF_adj', 'away_SF_adj', 'home_xGF_adj', 'away_xGF_adj']].sum().reset_index()
+    ## xG Strength
+    data['home_EV_xGF_adj'] = data['home_attempts'] * data['xG_team'] * data['home_xG_coef'] * data['even_strength']
+    data['away_EV_xGF_adj'] = data['away_attempts'] * data['xG_team'] * data['away_xG_coef'] * data['even_strength']
+
+    data['home_PP_xGF_adj'] = data['home_attempts'] * data['xG_team'] * data['home_xG_coef'] * data['home_advantage']
+    data['away_PP_xGF_adj'] = data['away_attempts'] * data['xG_team'] * data['away_xG_coef'] * data['away_advantage']
+
+    data['home_PK_xGF_adj'] = data['home_attempts'] * data['xG_team'] * data['home_xG_coef'] * data['away_advantage']
+    data['away_PK_xGF_adj'] = data['away_attempts'] * data['xG_team'] * data['away_xG_coef'] * data['home_advantage']
+
+    data['home_rush_attempt'] = data['home_attempts'] * data['is_Rush']
+    data['away_rush_attempt'] = data['away_attempts'] * data['is_Rush']
+
+    data['home_rebound_attempt'] = data['home_attempts'] * data['is_Rebound']
+    data['away_rebound_attempt'] = data['away_attempts'] * data['is_Rebound']
+
+    game_fenwick_totals = data.groupby(['id', 'season'])[
+        ['home_SF_adj', 'away_SF_adj', 'home_xGF_adj', 'away_xGF_adj',
+         'home_EV_xGF_adj', 'away_EV_xGF_adj', 'home_PP_xGF_adj', 'away_PP_xGF_adj', 'home_PK_xGF_adj',
+         'away_PK_xGF_adj',
+         'home_rush_attempt', 'away_rush_attempt', 'home_rebound_attempt', 'away_rebound_attempt']].sum().reset_index()
+
+    print(game_fenwick_totals.columns)
 
     game_fenwick_totals = game_fenwick_totals.merge(game_score_state, on='id', how='left')
 
     score_adjusted_game_data = score_adjusted_game_data.append(game_fenwick_totals)
 
-    duration_metrics = ['Duration-1','Duration-2','Duration-3','Duration0','Duration1','Duration2','Duration3']
-    score_adjusted_game_data['Duration_60'] = score_adjusted_game_data[duration_metrics].sum(axis=1)
-    score_adjusted_game_data['Duration_60'] = score_adjusted_game_data['Duration_60'].apply(lambda x: x if x >= 3600 else 3600)
+    duration_metrics = ['Duration-1', 'Duration-2', 'Duration-3', 'Duration0', 'Duration1', 'Duration2', 'Duration3']
+    score_adjusted_game_data['Duration_60'] = score_adjusted_game_data[duration_metrics].sum(axis=1).fillna(3600)
+    score_adjusted_game_data['Duration_60'] = score_adjusted_game_data['Duration_60'].apply(
+        lambda x: x if x >= 3600 else 3600)
 
     return (score_adjusted_game_data)
-
 
 def goalie_game_update(start_game_id, scored_data):
     # Prior games
