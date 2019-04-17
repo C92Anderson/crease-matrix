@@ -443,6 +443,8 @@ def lookups_data_clean(data):
     data['Shooter_Handedness'] = data.apply(lambda x: "L" if x.Shoots == "L" else \
         "R" if x.Shoots == "R" else "U", axis=1)
 
+    data['Offwing_Shot'] = data.apply( lambda x: 1 if ((x.Shooter_Handedness == "L")  & (x.LS_Shot == 1)) | ((x.Shooter_Handedness == "R")  & (x.LS_Shot == "0")) else 0, axis=1 )
+
     data['Handed_Class'] = data['Shoots'].str.cat(data['Catches'], sep='')
 
     data['Handed_Class2'] = data.apply(lambda x: "Same" if x.Handed_Class in ["LL", "RR"] else \
@@ -479,29 +481,13 @@ def feature_generation(data,
                        num_vars=["EmptyNet_SA", "is_Rebound", "is_Rush", "LN_Last_Event_Time", "LastEV_Off_Faceoff",
                                  "LastEV_Def_Faceoff", "LastEV_Neu_Faceoff", "LastEV_Off_Shot", "LastEV_Def_Shot",
                                  "LastEV_Neu_Shot",
+                                 "Offwing_Shot",
                                  "LastEV_Off_Give", "LastEV_Def_Give", "LastEV_Neu_Give", "LN_Rebound_Angular_Velocity",
                                  "LN_LastEV_FtperSec_Change", "LN_LastEV_AngleperSec_Change",
                                  "LN_LastEV_AngleperFt_Change",
                                  "Regressed_Shooting_Indexed"],
                        cat_vars=["Type", "Game_State", "Handed_Class2", "Player_Position2"],
-                       poly_vars=["Shot_Distance", "Shot_Angle"],
-                       model_vars=['EmptyNet_SA', 'is_Rebound', 'is_Rush', 'LN_Last_Event_Time',
-                                   'LastEV_Off_Faceoff', 'LastEV_Def_Faceoff', 'LastEV_Neu_Faceoff',
-                                   'LastEV_Off_Shot', 'LastEV_Def_Shot', 'LastEV_Neu_Shot',
-                                   'LastEV_Off_Give', 'LastEV_Def_Give', 'LastEV_Neu_Give',
-                                   'LN_LastEV_FtperSec_Change', 'LN_LastEV_AngleperSec_Change',
-                                   'LN_LastEV_AngleperFt_Change',
-
-                                   'LN_Rebound_Angular_Velocity', 'Regressed_Shooting_Indexed',
-                                   'Type_BACKHAND', 'Type_DEFLECTED', 'Type_SLAP SHOT',
-                                   'Type_WRIST SHOT',
-                                   'Game_State_3v3', 'Game_State_4v3', 'Game_State_4v4', 'Game_State_5v5',
-                                   'Game_State_5v4', 'Game_State_6v5', 'Game_State_Other', 'Game_State_PP_2p_SF',
-                                   'Game_State_SH_SF',
-                                   'Handed_Class2_Opposite',
-                                   'Player_Position2_F', 'Shot_Distance',
-                                   'Shot_Distance^2', 'Shot_Distance^3', 'Shot_Angle', 'Shot_Angle^2',
-                                   'Shot_Angle^3']):
+                       poly_vars=["Shot_Distance", "Shot_Angle"]):
     from sklearn.preprocessing import PolynomialFeatures
     ## Dummy Variables
     model_data = data[num_vars].fillna(0)
@@ -546,6 +532,7 @@ def All_Model_Scoring(model_data, data, szn):
                   'LN_Rebound_Angular_Velocity', 'Regressed_Shooting_Indexed',
                   'Type_BACKHAND', 'Type_DEFLECTED', 'Type_SLAP SHOT',
                   'Type_WRIST SHOT',
+                  'Offwing_Shot',
                   'Game_State_3v3', 'Game_State_4v3', 'Game_State_4v4', 'Game_State_5v5', 'Game_State_5v4',
                   'Game_State_6v5', 'Game_State_Other', 'Game_State_PP_2p_SF', 'Game_State_SH_SF',
                   'Handed_Class2_Opposite',
@@ -659,6 +646,7 @@ def All_Model_ScoringOnly(model_data, data, szn):
                   'LN_Rebound_Angular_Velocity', 'Regressed_Shooting_Indexed',
                   'Type_BACKHAND', 'Type_DEFLECTED', 'Type_SLAP SHOT',
                   'Type_WRIST SHOT',
+                  'Offwing_Shot',
                   'Game_State_3v3', 'Game_State_4v3', 'Game_State_4v4', 'Game_State_5v5', 'Game_State_5v4',
                   'Game_State_6v5', 'Game_State_Other', 'Game_State_PP_2p_SF', 'Game_State_SH_SF',
                   'Handed_Class2_Opposite',

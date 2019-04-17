@@ -6,7 +6,7 @@ import time
 print("Running game_pipeline.py")
 
 # Sleep for 4 hours
-time.sleep(7*60*60)
+#time.sleep(6.5*60*60)
 
 print("Waking up")# + str(datetime.now()))
 
@@ -29,7 +29,7 @@ goalie_xG_rolling_df = pipeline_functions.read_boto_s3('games-all','goalie_xG_ro
 scored_data2017_2019 = pipeline_functions.read_boto_s3('shots-all', "scored_data2017_2019.csv")
 
 start_game_id = max(game_info_data['id'])
-end_game_id = pipeline_functions.tomorrow_last_gameid()
+end_game_id = pipeline_functions.today_last_gameid()
 year = 2018
 
 goalie_IR = []

@@ -350,7 +350,7 @@ def scrape_seasons(seasons, if_scrape_shifts):
     print_errors()
 
 
-def scrape_games(last_game, if_games_list, szn, if_scrape_shifts, process = True, model = False):
+def scrape_games(last_game, last_date, szn, if_scrape_shifts, process = True, model = False):
     """
     Scrape a given game
     :param games: list of game_ids
@@ -390,30 +390,29 @@ def scrape_games(last_game, if_games_list, szn, if_scrape_shifts, process = True
     pbp_df_all = pbp_df_t_1.append(pbp_df_t0)
 
     prior_games = max(pbp_df_t0.Game_Id)
-
     print(prior_games)
 
     # shifts_df_all = pd.read_csv("nhl_shifts" + str(this_season) + ".csv", encoding='latin-1')
     shifts_df_all = pipeline_functions.read_boto_s3('shots-all', 'nhl_shifts' + str(this_season) + '.csv')
 
-    if if_games_list is None:
+    if last_date is None:
+        prior_games = max(pbp_df_t0.Game_Id)
+        print(prior_games)
         games = list(range(prior_games + 1, last_game + 1))
+        games_list = list(map(str, games))
+        games_list = [str(szn) + '0' + x for x in games_list]
+        games_list = list(map(int, games_list))
+        ## Create List of game_id's and dates
+        games_list = json_schedule.get_dates(games_list)
     else:
-        games = if_games_list
-
-    ## Pull dates for games
-    games_list = list(map(str, games))
-    games_list = [str(szn) + '0' + x for x in games_list]
-    games_list = list(map(int, games_list))
-
-    ## Create List of game_id's and dates
-    games_list = json_schedule.get_dates(games_list)
+        prior_dates = max(pbp_df_t0.Date)
+        print(prior_dates)
+        games_list = json_schedule.scrape_schedule(prior_dates,last_date)
 
     ## Update Rosters
-    df_adjustments.roster_info_update(str(szn)+str(szn+1))
+    #df_adjustments.roster_info_update(str(szn)+str(szn+1))
 
     print(games_list)
-    print(type(games_list))
 
     pbp_df, shifts_df = scrape_list_of_games(games_list, if_scrape_shifts)
     pbp_df = pipeline_functions.encode_data(pbp_df, types = pbp_types)
