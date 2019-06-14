@@ -6,7 +6,7 @@ import time
 print("Running game_pipeline.py")
 
 # Sleep for 4 hours
-#time.sleep(6.5*60*60)
+time.sleep(6.5*60*60)
 
 print("Waking up")# + str(datetime.now()))
 
