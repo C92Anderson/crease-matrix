@@ -212,7 +212,7 @@ tradingeconomics==0.2.88
 traitlets==4.3.2
 trueskill==0.4.4
 unicodecsv==0.14.1
-urllib3==1.22
+urllib3==1.26.5
 virtualenv==15.1.0
 virtualenv-clone==0.2.6
 w3lib==1.19.0
